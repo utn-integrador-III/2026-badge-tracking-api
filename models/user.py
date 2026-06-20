@@ -16,6 +16,7 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
     email: str = Field(min_length=5, max_length=150)
     role: UserRole
     institutionalId: str = Field(min_length=9, max_length=9, pattern=r"^\d{9}$")
+    photoUrl: str | None = Field(default=None, max_length=255)
 
     @field_validator("fullName", "email", "institutionalId")
     @classmethod
@@ -36,6 +37,15 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
 
         return normalizedEmail
 
+    @field_validator("photoUrl")
+    @classmethod
+    def trimOptionalText(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleanedValue = value.strip()
+        return cleanedValue or None
+
 
 class UserResponse(BaseModel):
     id: int
@@ -43,6 +53,7 @@ class UserResponse(BaseModel):
     email: str
     role: UserRole
     institutionalId: str
+    photoUrl: str | None
     isActive: bool
     createdAt: str
 
@@ -53,9 +64,22 @@ class BadgeResponse(BaseModel):
     badgeCode: str
     status: str
     issuedAt: str
+    validFrom: str
+    validUntil: str
 
 
 class RegisterInstitutionalIdentityResponse(BaseModel):
     message: str
     user: UserResponse
     badge: BadgeResponse
+
+
+class BadgeProfileResponse(BaseModel):
+    photoUrl: str | None
+    fullName: str
+    role: UserRole
+    institutionalId: str
+    badgeCode: str
+    status: str
+    validFrom: str
+    validUntil: str

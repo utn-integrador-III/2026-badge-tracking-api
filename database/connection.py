@@ -33,6 +33,7 @@ def initializeDatabase() -> None:
                     email TEXT NOT NULL UNIQUE,
                     role TEXT NOT NULL CHECK(role IN ('student', 'professor', 'staff')),
                     institutional_id TEXT NOT NULL UNIQUE,
+                    photo_url TEXT,
                     is_active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
@@ -43,7 +44,29 @@ def initializeDatabase() -> None:
                     badge_code TEXT NOT NULL UNIQUE,
                     status TEXT NOT NULL DEFAULT 'issued',
                     issued_at TEXT NOT NULL,
+                    valid_from TEXT,
+                    valid_until TEXT,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 );
                 """
             )
+            addColumnIfMissing(connection, "users", "photo_url", "TEXT")
+            addColumnIfMissing(connection, "badges", "valid_from", "TEXT")
+            addColumnIfMissing(connection, "badges", "valid_until", "TEXT")
+
+
+def addColumnIfMissing(
+    connection: sqlite3.Connection,
+    tableName: str,
+    columnName: str,
+    columnDefinition: str,
+) -> None:
+    tableColumns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({tableName})").fetchall()
+    }
+
+    if columnName not in tableColumns:
+        connection.execute(
+            f"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition}"
+        )

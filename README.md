@@ -41,7 +41,8 @@ Example body:
   "fullName": "Kevin Picado",
   "email": "kevin.picado@utn.ac.cr",
   "role": "student",
-  "institutionalId": "123456789"
+  "institutionalId": "123456789",
+  "photoUrl": "https://example.com/profile-photo.png"
 }
 ```
 
@@ -53,6 +54,35 @@ student, professor, staff
 
 `institutionalId` is the person's Costa Rican ID number. It must contain exactly
 9 digits.
+
+## US-03 View My Digital Badge Profile
+
+Endpoint:
+
+```http
+GET /users/{institutionalId}/badge-profile
+```
+
+Example:
+
+```http
+GET /users/123456789/badge-profile
+```
+
+Response:
+
+```json
+{
+  "photoUrl": "https://example.com/profile-photo.png",
+  "fullName": "Kevin Picado",
+  "role": "student",
+  "institutionalId": "123456789",
+  "badgeCode": "BADGE-123456789-ABC12345",
+  "status": "issued",
+  "validFrom": "2026-06-20T16:20:27.493776+00:00",
+  "validUntil": "2027-06-20T16:20:27.493776+00:00"
+}
+```
 
 ## Tests
 
