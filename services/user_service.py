@@ -18,6 +18,31 @@ class InvalidInstitutionalIdError(Exception):
 class UserBadgeProfileNotFoundError(Exception):
     pass
 
+class UserNotFoundError(Exception):
+    pass
+ 
+ 
+class PinAlreadySetError(Exception):
+    pass
+ 
+ 
+class PinNotSetError(Exception):
+    pass
+ 
+ 
+class PinMismatchError(Exception):
+    pass
+ 
+ 
+class InvalidPinError(Exception):
+    pass
+
+def _hashPin(pin: str) -> str:
+    return bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=12)).decode()
+ 
+ 
+def _verifyPin(pin: str, pinHash: str) -> bool:
+    return bcrypt.checkpw(pin.encode(), pinHash.encode())
 
 def registerInstitutionalIdentity(
     request: RegisterInstitutionalIdentityRequest,
@@ -155,3 +180,88 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
 def calculateDefaultValidUntil(validFrom: str) -> str:
     validFromDate = datetime.fromisoformat(validFrom)
     return (validFromDate + timedelta(days=365)).isoformat()
+
+def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
+    if not re.fullmatch(r"\d{6}", institutionalId):
+        raise InvalidInstitutionalIdError(
+            "Institutional ID must contain exactly 6 digits"
+        )
+ 
+    if request.pin != request.pinConfirm:
+        raise PinMismatchError("PIN and PIN confirmation do not match")
+ 
+    pinSetAt = datetime.now(timezone.utc).isoformat()
+    pinHash = _hashPin(request.pin)
+ 
+    with closing(getConnection()) as connection:
+        user = connection.execute(
+            """
+            SELECT id, institutional_id, pin_hash, is_active
+            FROM users
+            WHERE institutional_id = ?
+            """,
+            (institutionalId,),
+        ).fetchone()
+ 
+        if not user:
+            raise UserNotFoundError("User not found")
+ 
+        if not user["is_active"]:
+            raise UserNotFoundError("User account is not active")
+ 
+        if user["pin_hash"] is not None:
+            raise PinAlreadySetError(
+                "PIN has already been set. Contact support to reset it."
+            )
+ 
+        with connection:
+            connection.execute(
+                """
+                UPDATE users
+                SET pin_hash = ?, pin_set_at = ?
+                WHERE institutional_id = ?
+                """,
+                (pinHash, pinSetAt, institutionalId),
+            )
+ 
+    return {
+        "message": "PIN set successfully",
+        "institutionalId": institutionalId,
+        "pinSetAt": pinSetAt,
+    }
+
+def validateUserPin(institutionalId: str, pin: str) -> dict:
+    if not re.fullmatch(r"\d{6}", institutionalId):
+        raise InvalidInstitutionalIdError(
+            "Institutional ID must contain exactly 6 digits"
+        )
+ 
+    with closing(getConnection()) as connection:
+        user = connection.execute(
+            """
+            SELECT institutional_id, pin_hash, is_active
+            FROM users
+            WHERE institutional_id = ?
+            """,
+            (institutionalId,),
+        ).fetchone()
+ 
+    if not user:
+        raise UserNotFoundError("User not found")
+ 
+    if not user["is_active"]:
+        raise UserNotFoundError("User account is not active")
+ 
+    if user["pin_hash"] is None:
+        raise PinNotSetError(
+            "No PIN has been set for this user. Please set a PIN first."
+        )
+ 
+    if not _verifyPin(pin, user["pin_hash"]):
+        raise InvalidPinError("Invalid PIN")
+ 
+    return {
+        "valid": True,
+        "institutionalId": institutionalId,
+        "message": "PIN validated successfully",
+    }
