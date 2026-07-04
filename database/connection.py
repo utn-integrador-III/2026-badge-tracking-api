@@ -53,6 +53,8 @@ def initializeDatabase() -> None:
             addColumnIfMissing(connection, "users", "photo_url", "TEXT")
             addColumnIfMissing(connection, "badges", "valid_from", "TEXT")
             addColumnIfMissing(connection, "badges", "valid_until", "TEXT")
+            addColumnIfMissing(connection, "users", "pin_hash", "TEXT")
+            addColumnIfMissing(connection, "users", "pin_set_at", "TEXT")
 
 
 def addColumnIfMissing(

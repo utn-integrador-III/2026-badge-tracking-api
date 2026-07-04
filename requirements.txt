@@ -3,3 +3,4 @@ httpx
 pytest
 pytest-cov
 uvicorn
+bcrypt>=4.0.0

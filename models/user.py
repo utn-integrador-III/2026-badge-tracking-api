@@ -47,6 +47,13 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
         return cleanedValue or None
 
 
+class SetPinRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
+    pinConfirm: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
+
+
 class UserResponse(BaseModel):
     id: int
     fullName: str
