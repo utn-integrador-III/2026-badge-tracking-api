@@ -1,20 +1,4 @@
-import importlib
 from datetime import datetime
-
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    databasePath = tmp_path / "badge_tracking_test.db"
-    monkeypatch.setenv("BADGE_TRACKING_DB_PATH", str(databasePath))
-
-    connectionModule = importlib.import_module("database.connection")
-    connectionModule.initializeDatabase()
-
-    mainModule = importlib.import_module("main")
-    return TestClient(mainModule.app)
 
 
 def registerUser(client):

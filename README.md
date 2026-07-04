@@ -5,6 +5,7 @@ Backend API for the Badge Tracking Project.
 ## Requirements
 
 - Python 3.13+
+- MongoDB running locally or a MongoDB connection string
 
 ## Setup
 
@@ -12,6 +13,13 @@ Backend API for the Badge Tracking Project.
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+Optional environment variables:
+
+```text
+BADGE_TRACKING_MONGODB_URI=mongodb://localhost:27017
+BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 ```
 
 ## Run API
