@@ -63,6 +63,75 @@ student, professor, staff
 `institutionalId` is the person's Costa Rican ID number. It must contain exactly
 9 digits.
 
+## US-02 Authenticate via PIN
+
+Set PIN endpoint:
+
+```http
+POST /users/{institutionalId}/pin
+```
+
+Example:
+
+```http
+POST /users/123456789/pin
+```
+
+Example body:
+
+```json
+{
+  "pin": "281992",
+  "pinConfirm": "281992"
+}
+```
+
+Response:
+
+```json
+{
+  "message": "PIN set successfully",
+  "institutionalId": "123456789",
+  "pinSetAt": "2026-06-20T16:20:27.493776+00:00"
+}
+```
+
+Validate PIN endpoint:
+
+```http
+POST /users/{institutionalId}/pin/validate
+```
+
+Example:
+
+```http
+POST /users/123456789/pin/validate
+```
+
+Example body:
+
+```json
+{
+  "pin": "281992"
+}
+```
+
+Response:
+
+```json
+{
+  "valid": true,
+  "institutionalId": "123456789",
+  "message": "PIN validated successfully"
+}
+```
+
+PIN rules:
+
+```text
+6 numeric digits, no repeated same digit, no sequential number
+```
+
 ## US-03 View My Digital Badge Profile
 
 Endpoint:
