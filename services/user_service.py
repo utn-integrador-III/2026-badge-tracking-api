@@ -3,10 +3,8 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import re
 
-import bcrypt
-
 from database.connection import getConnection
-from models.user import RegisterInstitutionalIdentityRequest, SetPinRequest
+from models.user import RegisterInstitutionalIdentityRequest
 
 
 class DuplicateUserError(Exception):
@@ -20,34 +18,31 @@ class InvalidInstitutionalIdError(Exception):
 class UserBadgeProfileNotFoundError(Exception):
     pass
 
-
 class UserNotFoundError(Exception):
     pass
-
-
+ 
+ 
 class PinAlreadySetError(Exception):
     pass
-
-
+ 
+ 
 class PinNotSetError(Exception):
     pass
-
-
+ 
+ 
 class PinMismatchError(Exception):
     pass
-
-
+ 
+ 
 class InvalidPinError(Exception):
     pass
 
-
 def _hashPin(pin: str) -> str:
     return bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=12)).decode()
-
-
+ 
+ 
 def _verifyPin(pin: str, pinHash: str) -> bool:
     return bcrypt.checkpw(pin.encode(), pinHash.encode())
-
 
 def registerInstitutionalIdentity(
     request: RegisterInstitutionalIdentityRequest,
@@ -187,9 +182,9 @@ def calculateDefaultValidUntil(validFrom: str) -> str:
     return (validFromDate + timedelta(days=365)).isoformat()
 
 def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
-    if not re.fullmatch(r"\d{9}", institutionalId):
+    if not re.fullmatch(r"\d{6}", institutionalId):
         raise InvalidInstitutionalIdError(
-            "Institutional ID must contain exactly 9 digits"
+            "Institutional ID must contain exactly 6 digits"
         )
  
     if request.pin != request.pinConfirm:
@@ -236,9 +231,9 @@ def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
     }
 
 def validateUserPin(institutionalId: str, pin: str) -> dict:
-    if not re.fullmatch(r"\d{9}", institutionalId):
+    if not re.fullmatch(r"\d{6}", institutionalId):
         raise InvalidInstitutionalIdError(
-            "Institutional ID must contain exactly 9 digits"
+            "Institutional ID must contain exactly 6 digits"
         )
  
     with closing(getConnection()) as connection:
