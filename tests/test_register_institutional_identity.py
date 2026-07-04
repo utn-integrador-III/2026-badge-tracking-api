@@ -1,4 +1,5 @@
 import importlib
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -80,6 +81,82 @@ def test_register_user_requires_nine_digit_institutional_id(client):
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("role", ["student", "professor", "staff"])
+def test_register_user_accepts_all_valid_roles(client, role):
+    response = client.post(
+        "/users/institutional-identities",
+        json=validPayload(role=role, institutionalId="111111111"),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["role"] == role
+
+
+def test_register_user_normalizes_email_to_lowercase(client):
+    response = client.post(
+        "/users/institutional-identities",
+        json=validPayload(email="Kevin.Picado@UTN.AC.CR"),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["email"] == "kevin.picado@utn.ac.cr"
+
+
+def test_register_user_trims_whitespace_in_text_fields(client):
+    response = client.post(
+        "/users/institutional-identities",
+        json=validPayload(fullName="  Kevin Picado  "),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["fullName"] == "Kevin Picado"
+
+
+def test_register_user_rejects_invalid_email_format(client):
+    response = client.post(
+        "/users/institutional-identities",
+        json=validPayload(email="not-an-email"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_user_rejects_full_name_too_short(client):
+    response = client.post(
+        "/users/institutional-identities",
+        json=validPayload(fullName="K"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_user_rejects_missing_required_field(client):
+    payload = validPayload()
+    del payload["fullName"]
+
+    response = client.post("/users/institutional-identities", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_register_user_accepts_optional_photo_url_omitted(client):
+    response = client.post("/users/institutional-identities", json=validPayload())
+
+    assert response.status_code == 201
+    assert response.json()["user"]["photoUrl"] is None
+
+
+def test_register_user_issues_badge_valid_for_one_year(client):
+    response = client.post("/users/institutional-identities", json=validPayload())
+
+    assert response.status_code == 201
+    badge = response.json()["badge"]
+    issuedAt = datetime.fromisoformat(badge["issuedAt"])
+    validUntil = datetime.fromisoformat(badge["validUntil"])
+
+    assert (validUntil - issuedAt) == timedelta(days=365)
 
 
 def test_root_returns_api_information(client):
