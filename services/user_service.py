@@ -22,6 +22,7 @@ class InvalidInstitutionalIdError(Exception):
 class UserBadgeProfileNotFoundError(Exception):
     pass
 
+
 class UserNotFoundError(Exception):
     pass
 
@@ -48,6 +49,7 @@ def _hashPin(pin: str) -> str:
 
 def _verifyPin(pin: str, pinHash: str) -> bool:
     return bcrypt.checkpw(pin.encode(), pinHash.encode())
+
 
 def _getNextSequence(sequenceName: str) -> int:
     database = getDatabase()
@@ -200,6 +202,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
 def calculateDefaultValidUntil(validFrom: str) -> str:
     validFromDate = datetime.fromisoformat(validFrom)
     return (validFromDate + timedelta(days=365)).isoformat()
+
 
 def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
     _assertValidInstitutionalId(institutionalId)
