@@ -4,13 +4,24 @@ from models.user import (
     BadgeProfileResponse,
     RegisterInstitutionalIdentityRequest,
     RegisterInstitutionalIdentityResponse,
+    SetPinRequest,
+    SetPinResponse,
+    ValidatePinRequest,
+    ValidatePinResponse,
 )
 from services.user_service import (
     DuplicateUserError,
     InvalidInstitutionalIdError,
+    InvalidPinError,
+    PinAlreadySetError,
+    PinMismatchError,
+    PinNotSetError,
     UserBadgeProfileNotFoundError,
+    UserNotFoundError,
     getDigitalBadgeProfile as getDigitalBadgeProfileService,
     registerInstitutionalIdentity as registerInstitutionalIdentityService,
+    setUserPin as setUserPinService,
+    validateUserPin as validateUserPinService,
 )
 
 
@@ -49,5 +60,68 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
     except UserBadgeProfileNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    
+@router.post(
+    "/{institutionalId}/pin",
+    response_model=SetPinResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
+    if request.pin != request.pinConfirm:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="PIN and PIN confirmation do not match",
+        )
+    try:
+        return setUserPinService(institutionalId, request)
+    except InvalidInstitutionalIdError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except PinAlreadySetError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except PinMismatchError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+ 
+@router.post(
+    "/{institutionalId}/pin/validate",
+    response_model=ValidatePinResponse,
+    status_code=status.HTTP_200_OK,
+)
+def validateUserPin(institutionalId: str, request: ValidatePinRequest) -> dict:
+    try:
+        return validateUserPinService(institutionalId, request.pin)
+    except InvalidInstitutionalIdError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except PinNotSetError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except InvalidPinError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(error),
         ) from error
