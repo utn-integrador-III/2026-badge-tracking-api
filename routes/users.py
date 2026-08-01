@@ -2,16 +2,24 @@ from fastapi import APIRouter, HTTPException, status
 
 from models.user import (
     AgeProofQrResponse,
+    BadgeDeliveryPinRequest,
+    BadgeDeliveryResponse,
     BadgeProfileResponse,
     BadgeVerificationQrResponse,
     GenerateAgeProofQrRequest,
     GenerateBadgeVerificationQrRequest,
+    PendingBadgeDeliveriesResponse,
     RegisterInstitutionalIdentityRequest,
     RegisterInstitutionalIdentityResponse,
     SetPinRequest,
     SetPinResponse,
     ValidatePinRequest,
     ValidatePinResponse,
+)
+from services.badge_delivery_service import BadgeDeliveryNotFoundError
+from services.badge_issuance_service import (
+    acknowledgeBadgeDelivery as acknowledgeBadgeDeliveryService,
+    fetchPendingBadgeDeliveries as fetchPendingBadgeDeliveriesService,
 )
 from services.badge_verification_service import (
     generateBadgeVerificationQr as generateBadgeVerificationQrService,
@@ -33,6 +41,7 @@ from services.user_service import (
     setUserPin as setUserPinService,
     validateUserPin as validateUserPinService,
 )
+from utils.http_errors import serviceErrorsAsHttp
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -148,14 +157,13 @@ SHARE_QR_ERROR_STATUSES = {
 }
 
 
-def _shareQrOrFail(buildQr, institutionalId: str, request):
-    try:
-        return buildQr(institutionalId, request)
-    except tuple(SHARE_QR_ERROR_STATUSES) as error:
-        raise HTTPException(
-            status_code=SHARE_QR_ERROR_STATUSES[type(error)],
-            detail=str(error),
-        ) from error
+BADGE_DELIVERY_ERROR_STATUSES = {
+    InvalidInstitutionalIdError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    UserNotFoundError: status.HTTP_404_NOT_FOUND,
+    PinNotSetError: status.HTTP_409_CONFLICT,
+    InvalidPinError: status.HTTP_401_UNAUTHORIZED,
+    BadgeDeliveryNotFoundError: status.HTTP_404_NOT_FOUND,
+}
 
 
 @router.post(
@@ -167,7 +175,8 @@ def generateAgeProofQr(
     institutionalId: str,
     request: GenerateAgeProofQrRequest,
 ) -> dict:
-    return _shareQrOrFail(generateAgeProofQrService, institutionalId, request)
+    with serviceErrorsAsHttp(SHARE_QR_ERROR_STATUSES):
+        return generateAgeProofQrService(institutionalId, request)
 
 
 @router.post(
@@ -179,8 +188,36 @@ def generateBadgeVerificationQr(
     institutionalId: str,
     request: GenerateBadgeVerificationQrRequest,
 ) -> dict:
-    return _shareQrOrFail(
-        generateBadgeVerificationQrService,
-        institutionalId,
-        request,
-    )
+    with serviceErrorsAsHttp(SHARE_QR_ERROR_STATUSES):
+        return generateBadgeVerificationQrService(institutionalId, request)
+
+
+@router.post(
+    "/{institutionalId}/badge-deliveries/fetch",
+    response_model=PendingBadgeDeliveriesResponse,
+    status_code=status.HTTP_200_OK,
+)
+def fetchPendingBadgeDeliveries(
+    institutionalId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_DELIVERY_ERROR_STATUSES):
+        return fetchPendingBadgeDeliveriesService(institutionalId, request.pin)
+
+
+@router.post(
+    "/{institutionalId}/badge-deliveries/{deliveryId}/acknowledge",
+    response_model=BadgeDeliveryResponse,
+    status_code=status.HTTP_200_OK,
+)
+def acknowledgeBadgeDelivery(
+    institutionalId: str,
+    deliveryId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_DELIVERY_ERROR_STATUSES):
+        return acknowledgeBadgeDeliveryService(
+            institutionalId,
+            deliveryId,
+            request.pin,
+        )
