@@ -7,20 +7,48 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
-from pymongo import ReturnDocument
+from pymongo import DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from database.connection import getDatabase
 from models.user import (
+    DEFAULT_BADGE_VALIDITY_IN_DAYS,
     GenerateAgeProofQrRequest,
     RegisterInstitutionalIdentityRequest,
     SetPinRequest,
 )
+from services.badge_delivery_service import triggerBadgeDelivery
 from utils.qr_code import buildQrCodeDataUri
 
 
 DEFAULT_VERIFICATION_BASE_URL = "http://127.0.0.1:8000"
-SHAREABLE_BADGE_STATUSES = frozenset({"issued", "active"})
+ACTIVE_BADGE_STATUSES = frozenset({"issued", "active"})
+
+
+_LATEST_BADGE_FIRST = [("issued_at", DESCENDING), ("id", DESCENDING)]
+
+
+def findLatestBadge(userId: int, projection: dict | None = None) -> dict | None:
+    """Return the most recently issued badge of a user, whatever its status.
+
+    A user accumulates badges as admins reissue them, so callers that need to
+    report on or reason about "the" badge want the newest one, including when
+    it is revoked or superseded.
+    """
+    return getDatabase().badges.find_one(
+        {"user_id": userId},
+        projection,
+        sort=_LATEST_BADGE_FIRST,
+    )
+
+
+def findCurrentBadge(userId: int, projection: dict | None = None) -> dict | None:
+    """Return the badge a user currently holds, ignoring inactive ones."""
+    return getDatabase().badges.find_one(
+        {"user_id": userId, "status": {"$in": list(ACTIVE_BADGE_STATUSES)}},
+        projection,
+        sort=_LATEST_BADGE_FIRST,
+    )
 
 
 class DuplicateUserError(Exception):
@@ -79,7 +107,7 @@ def _verifyPin(pin: str, pinHash: str) -> bool:
     return bcrypt.checkpw(pin.encode(), pinHash.encode())
 
 
-def _getNextSequence(sequenceName: str) -> int:
+def getNextSequence(sequenceName: str) -> int:
     database = getDatabase()
     sequence = database.counters.find_one_and_update(
         {"_id": sequenceName},
@@ -103,7 +131,9 @@ def registerInstitutionalIdentity(
     database = getDatabase()
     createdAtDate = datetime.now(timezone.utc)
     createdAt = createdAtDate.isoformat()
-    validUntil = (createdAtDate + timedelta(days=365)).isoformat()
+    validUntil = (
+        createdAtDate + timedelta(days=DEFAULT_BADGE_VALIDITY_IN_DAYS)
+    ).isoformat()
     badgeCode = f"BADGE-{request.institutionalId.upper()}-{uuid.uuid4().hex[:8].upper()}"
 
     existingUser = database.users.find_one(
@@ -121,8 +151,8 @@ def registerInstitutionalIdentity(
             raise DuplicateUserError("Email is already registered")
         raise DuplicateUserError("Institutional ID is already registered")
 
-    userId = _getNextSequence("users")
-    badgeId = _getNextSequence("badges")
+    userId = getNextSequence("users")
+    badgeId = getNextSequence("badges")
     userDocument = {
         "id": userId,
         "full_name": request.fullName,
@@ -140,6 +170,7 @@ def registerInstitutionalIdentity(
         "id": badgeId,
         "user_id": userId,
         "badge_code": badgeCode,
+        "role_type": request.role.value,
         "status": "issued",
         "issued_at": createdAt,
         "valid_from": createdAt,
@@ -157,6 +188,8 @@ def registerInstitutionalIdentity(
             raise DuplicateUserError("Institutional ID is already registered") from error
         raise DuplicateUserError("User is already registered") from error
 
+    triggerBadgeDelivery(userId, badgeDocument)
+
     return {
         "message": "User registered successfully",
         "user": {
@@ -173,6 +206,7 @@ def registerInstitutionalIdentity(
             "id": badgeId,
             "userId": userId,
             "badgeCode": badgeCode,
+            "roleType": request.role.value,
             "status": "issued",
             "issuedAt": createdAt,
             "validFrom": createdAt,
@@ -199,10 +233,11 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
     if not user:
         raise UserBadgeProfileNotFoundError("Badge profile was not found")
 
-    badge = database.badges.find_one(
-        {"user_id": user["id"]},
+    badge = findLatestBadge(
+        user["id"],
         {
             "badge_code": 1,
+            "role_type": 1,
             "status": 1,
             "issued_at": 1,
             "valid_from": 1,
@@ -222,6 +257,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
         "role": user["role"],
         "institutionalId": user["institutional_id"],
         "badgeCode": badge["badge_code"],
+        "roleType": badge.get("role_type") or user["role"],
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
@@ -354,15 +390,12 @@ def generateAgeProofQr(
         )
 
     database = getDatabase()
-    badge = database.badges.find_one(
-        {"user_id": user["id"]},
-        {"status": 1},
-    )
+    badge = findLatestBadge(user["id"], {"status": 1})
 
     if not badge:
         raise UserBadgeProfileNotFoundError("Badge profile was not found")
 
-    if badge["status"] not in SHAREABLE_BADGE_STATUSES:
+    if badge["status"] not in ACTIVE_BADGE_STATUSES:
         raise BadgeNotShareableError(
             f"Badge status '{badge['status']}' cannot be shared for verification"
         )

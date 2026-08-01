@@ -9,11 +9,12 @@ from models.user import (
     GenerateBadgeVerificationQrRequest,
 )
 from services.user_service import (
+    ACTIVE_BADGE_STATUSES,
     BadgeNotShareableError,
-    SHAREABLE_BADGE_STATUSES,
     UserBadgeProfileNotFoundError,
     assertValidInstitutionalId,
     authenticateBadgeHolder,
+    findLatestBadge,
     getVerificationBaseUrl,
 )
 from utils.qr_code import buildQrCodeDataUri
@@ -64,16 +65,12 @@ def generateBadgeVerificationQr(
 
     user = authenticateBadgeHolder(institutionalId, request.pin)
 
-    database = getDatabase()
-    badge = database.badges.find_one(
-        {"user_id": user["id"]},
-        {"badge_code": 1, "status": 1},
-    )
+    badge = findLatestBadge(user["id"], {"id": 1, "badge_code": 1, "status": 1})
 
     if not badge:
         raise UserBadgeProfileNotFoundError("Badge profile was not found")
 
-    if badge["status"] not in SHAREABLE_BADGE_STATUSES:
+    if badge["status"] not in ACTIVE_BADGE_STATUSES:
         raise BadgeNotShareableError(
             f"Badge status '{badge['status']}' cannot be shared for verification"
         )
@@ -88,6 +85,7 @@ def generateBadgeVerificationQr(
         {
             "v": CREDENTIAL_VERSION,
             "uid": user["id"],
+            "bid": badge["id"],
             "iat": issuedAt,
             "exp": expiresAt,
             "att": disclosedAttributes,
@@ -116,7 +114,7 @@ def extractScannedToken(scannedValue: str) -> str:
     return cleanedValue.split("?")[0].split("#")[0]
 
 
-def _checkLiveBadgeStatus(userId: Any) -> tuple[list[str], str | None]:
+def _checkLiveBadgeStatus(userId: Any, badgeId: Any) -> tuple[list[str], str | None]:
     database = getDatabase()
     user = database.users.find_one({"id": userId}, {"is_active": 1})
 
@@ -126,12 +124,20 @@ def _checkLiveBadgeStatus(userId: Any) -> tuple[list[str], str | None]:
     if not user["is_active"]:
         return [REASON_USER_INACTIVE], None
 
-    badge = database.badges.find_one({"user_id": userId}, {"status": 1})
+    # The credential names the badge it was minted from, so reissuing a badge
+    # retires the QR codes of the badge it replaced.
+    if badgeId is None:
+        badge = findLatestBadge(userId, {"status": 1})
+    else:
+        badge = database.badges.find_one(
+            {"id": badgeId, "user_id": userId},
+            {"status": 1},
+        )
 
     if not badge:
         return [REASON_BADGE_NOT_FOUND], None
 
-    if badge["status"] not in SHAREABLE_BADGE_STATUSES:
+    if badge["status"] not in ACTIVE_BADGE_STATUSES:
         return [REASON_BADGE_NOT_ACTIVE], badge["status"]
 
     return [], badge["status"]
@@ -233,7 +239,10 @@ def verifyScannedBadge(scannedValue: str) -> dict:
         if verifiedAtDate >= datetime.fromisoformat(expiresAt):
             reasons.append(REASON_EXPIRED)
 
-        statusReasons, badgeStatus = _checkLiveBadgeStatus(payload.get("uid"))
+        statusReasons, badgeStatus = _checkLiveBadgeStatus(
+            payload.get("uid"),
+            payload.get("bid"),
+        )
         reasons.extend(statusReasons)
 
     response = _buildVerificationResponse(
