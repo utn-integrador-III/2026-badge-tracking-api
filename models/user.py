@@ -233,3 +233,94 @@ class AgeProofVerificationResponse(BaseModel):
     issuedAt: str
     expiresAt: str
     verifiedAt: str
+
+
+class DisclosableAttribute(str, Enum):
+    fullName = "fullName"
+    photoUrl = "photoUrl"
+    role = "role"
+    institutionalId = "institutionalId"
+    badgeCode = "badgeCode"
+
+
+DEFAULT_DISCLOSED_ATTRIBUTES = [
+    DisclosableAttribute.fullName,
+    DisclosableAttribute.photoUrl,
+    DisclosableAttribute.role,
+]
+
+
+class BadgeVerificationResult(str, Enum):
+    passed = "pass"
+    failed = "fail"
+
+
+class GenerateBadgeVerificationQrRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="Badge holder PIN, required to authorize the share",
+    )
+    disclose: list[DisclosableAttribute] = Field(
+        default=list(DEFAULT_DISCLOSED_ATTRIBUTES),
+        min_length=1,
+        max_length=len(DisclosableAttribute),
+        description="Attributes the verifier is allowed to see",
+    )
+    expiresInSeconds: int = Field(
+        default=120,
+        ge=30,
+        le=900,
+        description="Lifetime of the QR code, between 30 and 900 seconds",
+    )
+
+    @field_validator("pin")
+    @classmethod
+    def validatePinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+    @field_validator("disclose")
+    @classmethod
+    def rejectDuplicateAttributes(
+        cls,
+        value: list[DisclosableAttribute],
+    ) -> list[DisclosableAttribute]:
+        if len(set(value)) != len(value):
+            raise ValueError("Disclosed attributes cannot be repeated")
+        return value
+
+
+class BadgeVerificationQrResponse(BaseModel):
+    token: str
+    verificationUrl: str
+    qrCodeImage: str
+    disclosedAttributes: list[DisclosableAttribute]
+    issuedAt: str
+    expiresAt: str
+    expiresInSeconds: int
+
+
+class ScanBadgeVerificationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    scannedValue: str = Field(
+        min_length=1,
+        max_length=4096,
+        description="Raw QR content, either the verification URL or the bare token",
+    )
+
+
+class BadgeVerificationResponse(BaseModel):
+    result: BadgeVerificationResult
+    signatureValid: bool
+    reasons: list[str]
+    disclosedAttributes: dict[str, str | None]
+    badgeStatus: str | None
+    issuedAt: str | None
+    expiresAt: str | None
+    verifiedAt: str
+    verificationId: str
