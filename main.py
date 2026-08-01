@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from database.connection import initializeDatabase
+from routes.badges import router as badgesRouter
 from routes.users import router as usersRouter
 from routes.verifications import router as verificationsRouter
 
@@ -12,6 +13,7 @@ def createApp() -> FastAPI:
         description="Backend API for the Badge Tracking Project.",
     )
     app.include_router(usersRouter)
+    app.include_router(badgesRouter)
     app.include_router(verificationsRouter)
     return app
 

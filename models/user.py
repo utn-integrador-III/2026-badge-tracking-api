@@ -11,6 +11,10 @@ class UserRole(str, Enum):
     student = "student"
     professor = "professor"
     staff = "staff"
+    admin = "admin"
+
+
+DEFAULT_BADGE_VALIDITY_IN_DAYS = 365
 
 
 class RegisterInstitutionalIdentityRequest(BaseModel):
@@ -94,6 +98,7 @@ class BadgeResponse(BaseModel):
     id: int
     userId: int
     badgeCode: str
+    roleType: UserRole
     status: str
     issuedAt: str
     validFrom: str
@@ -112,6 +117,7 @@ class BadgeProfileResponse(BaseModel):
     role: UserRole
     institutionalId: str
     badgeCode: str
+    roleType: UserRole
     status: str
     validFrom: str
     validUntil: str
@@ -324,3 +330,89 @@ class BadgeVerificationResponse(BaseModel):
     expiresAt: str | None
     verifiedAt: str
     verificationId: str
+
+
+class BadgeDeliveryStatus(str, Enum):
+    pending = "pending"
+    delivered = "delivered"
+    superseded = "superseded"
+
+
+class IssueBadgeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    adminInstitutionalId: str = Field(
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d{9}$",
+        description="Institutional ID of the admin performing the issuance",
+    )
+    adminPin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="PIN of the admin performing the issuance",
+    )
+    institutionalId: str = Field(
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d{9}$",
+        description="Institutional ID of the badge holder",
+    )
+    roleType: UserRole | None = Field(
+        default=None,
+        description="Badge role type. Defaults to the holder's institutional role.",
+    )
+    validForDays: int = Field(
+        default=DEFAULT_BADGE_VALIDITY_IN_DAYS,
+        ge=1,
+        le=1825,
+        description="How long the badge stays valid, between 1 and 1825 days",
+    )
+
+    @field_validator("adminPin")
+    @classmethod
+    def validateAdminPinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+
+class BadgeDeliveryResponse(BaseModel):
+    deliveryId: str
+    badgeId: int
+    badgeCode: str
+    roleType: UserRole
+    status: BadgeDeliveryStatus
+    validFrom: str
+    validUntil: str
+    triggeredAt: str
+    deliveredAt: str | None
+
+
+class IssueBadgeResponse(BaseModel):
+    message: str
+    badge: BadgeResponse
+    supersededBadgeId: int | None
+    delivery: BadgeDeliveryResponse
+
+
+class PendingBadgeDeliveriesResponse(BaseModel):
+    institutionalId: str
+    deliveries: list[BadgeDeliveryResponse]
+
+
+class BadgeDeliveryPinRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="Badge holder PIN, proving the request comes from their device",
+    )
+
+    @field_validator("pin")
+    @classmethod
+    def validatePinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
