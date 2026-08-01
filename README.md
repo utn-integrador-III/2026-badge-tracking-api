@@ -4,7 +4,7 @@ Backend API for the Badge Tracking Project.
 
 ## Requirements
 
-- Python 3.13+
+- Python 3.12+
 - MongoDB running locally or a MongoDB connection string
 
 ## Setup
@@ -15,23 +15,38 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Required for signed badge verification:
+
+Generate a private key locally:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Set the command output as the value (the placeholder below is intentionally not
+a valid key):
+
+```text
+BADGE_TRACKING_SIGNING_KEY=<paste-generated-secret-here>
+```
+
 Optional environment variables:
 
 ```text
 BADGE_TRACKING_MONGODB_URI=mongodb://localhost:27017
 BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 BADGE_TRACKING_VERIFICATION_BASE_URL=http://127.0.0.1:8000
-BADGE_TRACKING_SIGNING_KEY=change-me-in-every-deployed-environment
 ```
 
 `BADGE_TRACKING_VERIFICATION_BASE_URL` is the public base URL encoded into the
 QR codes. Set it to the deployed API URL so scanned codes resolve.
 
 `BADGE_TRACKING_SIGNING_KEY` signs badge verification credentials (US-07). It
-falls back to a well-known development value, so **it must be set to a private
-random value in every deployed environment**. Anyone holding this key can mint
-badges that pass verification. Rotating it invalidates QR codes already issued,
-which is harmless because they expire within minutes anyway.
+must be a private random value containing at least 32 bytes. The API deliberately
+has no fallback key: QR generation and verification return `503` when the key is
+missing or too short. Anyone holding this key can mint badges that pass
+verification. Rotating it invalidates QR codes already issued, which is harmless
+because they expire within minutes anyway.
 
 ## Run API
 
@@ -299,7 +314,11 @@ fullName, photoUrl, role, institutionalId, badgeCode
 `disclose` defaults to `["fullName", "photoUrl", "role"]`, cannot be empty and
 cannot repeat a value. `expiresInSeconds` defaults to `120` and must be between
 `30` and `900`. Disclosing fewer attributes produces a smaller, easier to scan
-QR code.
+QR code. The disclosed `role` is the role type of the issued badge; for legacy
+badges without `roleType`, the holder's institutional role is used.
+
+The badge must be active and inside its `validFrom`/`validUntil` period when the
+QR is generated. Otherwise, the endpoint returns `409`.
 
 Response:
 
@@ -356,9 +375,10 @@ Response:
 }
 ```
 
-Both endpoints always answer `200`. A rejected badge is a business outcome the
-desk has to display, not a transport error, so failures come back as
-`"result": "fail"` with the reasons filled in:
+When the signing key is configured, both scan endpoints answer `200` for badge
+verdicts. A rejected badge is a business outcome the desk has to display, not a
+transport error, so failures come back as `"result": "fail"` with the reasons
+filled in:
 
 ```json
 {
@@ -380,15 +400,20 @@ Failure reasons:
 malformed_token                 scanned value is not a badge credential
 invalid_signature               payload was edited or signed with another key
 unsupported_credential_version  credential format the API cannot verify
+credential_not_yet_valid        credential issue time is still in the future
 expired                         QR code is past its expiry
 user_not_found                  holder no longer exists
 user_inactive                   holder account was deactivated
 badge_not_found                 holder has no badge
 badge_not_active                badge was revoked or suspended
+badge_not_yet_valid             badge validity period has not started
+badge_expired                   badge validity period has ended
+badge_validity_invalid          badge validity dates are missing or inconsistent
 ```
 
 `422` is returned only when the request body itself is invalid, for example an
-empty `scannedValue`.
+empty `scannedValue`. `503` means the server has no valid signing key configured;
+it is an operational error, not a badge verdict.
 
 ### How the check works
 
@@ -398,15 +423,33 @@ The payload holds the holder id, issue and expiry timestamps, and the
 attributes the holder chose to disclose.
 ```
 
+- The credential is schema-validated after its signature is checked. Missing
+  claims, invalid timestamps, unknown attributes and non-object JSON return a
+  controlled `malformed_token` failure rather than an internal server error.
 - Attributes are **inside** the signature, so editing the name or role in the QR
   breaks verification instead of fooling the desk.
-- Attributes are returned **only when the signature is valid**. An unverified
-  payload is never echoed back, so a forged QR cannot put a name on the screen.
+- Attributes are returned after both the signature and the versioned credential
+  schema are valid, alongside either a `pass` or a live-status `fail`. Invalid
+  signatures, malformed credentials and unsupported versions return an empty
+  object. This preserves the verifier's ability to view the disclosed profile
+  while displaying an access denial.
 - Signature validity alone is not a pass. Every scan re-reads the holder and
-  badge from the database, so a badge revoked after the QR was generated fails
-  even while the signature is still valid.
+  exact badge from the database and checks its status and validity period, so a
+  badge revoked, replaced or expired after QR generation fails even while the
+  signature is still valid.
 - Every scan is recorded in `badge_verifications` with its own `verificationId`,
   the outcome and the reasons, giving the registrar an audit trail.
+
+The signed payload is base64url-encoded, not encrypted. Anyone holding the QR
+can decode the attributes selected by the holder, so clients should disclose
+only what the verifier needs and use the shortest practical lifetime. Invalid
+or expired QR responses should not be cached by clients. QR generation and
+badge-verdict responses include `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`.
+
+This online US-07 flow currently uses HMAC-SHA256. Asymmetric institutional
+signatures and offline public-key verification are separate US-20/US-08
+architecture work; QR single-use consumption belongs to the US-19 lifecycle.
 
 ## US-10 Issue a New Badge to a User
 
@@ -560,5 +603,5 @@ badge reaches the device through the same path as every later one.
 
 ```bash
 python -m pytest
-python -m pytest --cov=. --cov-report=term-missing
+python -m pytest tests -v --cov=models --cov=routes --cov=services --cov=database --cov=utils --cov-branch --cov-report=term-missing --cov-fail-under=80
 ```
