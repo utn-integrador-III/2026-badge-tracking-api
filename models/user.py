@@ -1,7 +1,15 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 
 MAX_REALISTIC_AGE_IN_YEARS = 120
@@ -254,6 +262,7 @@ DEFAULT_DISCLOSED_ATTRIBUTES = [
     DisclosableAttribute.photoUrl,
     DisclosableAttribute.role,
 ]
+MAXIMUM_BADGE_VERIFICATION_LIFETIME_SECONDS = 900
 
 
 class BadgeVerificationResult(str, Enum):
@@ -278,7 +287,7 @@ class GenerateBadgeVerificationQrRequest(BaseModel):
     expiresInSeconds: int = Field(
         default=120,
         ge=30,
-        le=900,
+        le=MAXIMUM_BADGE_VERIFICATION_LIFETIME_SECONDS,
         description="Lifetime of the QR code, between 30 and 900 seconds",
     )
 
@@ -308,6 +317,53 @@ class BadgeVerificationQrResponse(BaseModel):
     issuedAt: str
     expiresAt: str
     expiresInSeconds: int
+
+
+class BadgeVerificationCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    v: StrictInt
+    uid: StrictInt = Field(gt=0)
+    bid: StrictInt = Field(gt=0)
+    iat: datetime
+    exp: datetime
+    att: dict[DisclosableAttribute, StrictStr | None] = Field(
+        min_length=1,
+        max_length=len(DisclosableAttribute),
+    )
+
+    @field_validator("iat", "exp", mode="before")
+    @classmethod
+    def requireIsoTimestampString(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("Credential timestamps must be ISO 8601 strings")
+        return value
+
+    @field_validator("iat", "exp")
+    @classmethod
+    def requireTimezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Credential timestamps must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def requirePositiveLifetime(self) -> "BadgeVerificationCredential":
+        if self.exp <= self.iat:
+            raise ValueError("Credential expiry must be after its issue time")
+
+        if self.exp - self.iat > timedelta(
+            seconds=MAXIMUM_BADGE_VERIFICATION_LIFETIME_SECONDS
+        ):
+            raise ValueError("Credential lifetime cannot exceed 900 seconds")
+
+        roleValue = self.att.get(DisclosableAttribute.role)
+        if roleValue is not None:
+            try:
+                UserRole(roleValue)
+            except ValueError as error:
+                raise ValueError("Credential role is not valid") from error
+
+        return self
 
 
 class ScanBadgeVerificationRequest(BaseModel):

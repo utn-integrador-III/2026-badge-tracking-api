@@ -77,6 +77,8 @@ class TestGenerateVerificationQr:
         response = generateVerificationQr(client)
 
         assert response.status_code == 201
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["referrer-policy"] == "no-referrer"
         body = response.json()
         assert body["disclosedAttributes"] == ["fullName", "photoUrl", "role"]
         assert body["expiresInSeconds"] == 120
@@ -134,6 +136,17 @@ class TestGenerateVerificationQr:
         assert response.status_code == 401
         assert response.json()["detail"] == "Invalid PIN"
 
+    def test_generate_qr_requires_signing_key(self, client, monkeypatch):
+        registerUserWithPin(client)
+        monkeypatch.delenv("BADGE_TRACKING_SIGNING_KEY")
+
+        response = generateVerificationQr(client)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == (
+            "BADGE_TRACKING_SIGNING_KEY must be configured"
+        )
+
     def test_generate_qr_requires_pin_to_be_set_first(self, client):
         registerUser(client)
 
@@ -165,6 +178,74 @@ class TestGenerateVerificationQr:
 
         assert response.status_code == 409
         assert "cannot be shared" in response.json()["detail"]
+
+    def test_generate_qr_rejects_expired_badge(self, client, mongoDatabase):
+        registerUserWithPin(client)
+        now = datetime.now(timezone.utc)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {
+                "$set": {
+                    "valid_from": (now - timedelta(days=2)).isoformat(),
+                    "valid_until": (now - timedelta(days=1)).isoformat(),
+                }
+            },
+        )
+
+        response = generateVerificationQr(client)
+
+        assert response.status_code == 409
+        assert "badge_expired" in response.json()["detail"]
+
+    def test_disclosed_role_comes_from_the_issued_badge(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$set": {"role_type": "staff"}},
+        )
+
+        response = scanToken(
+            client,
+            issueToken(client, disclose=["role"]),
+        )
+
+        assert response.json()["result"] == "pass"
+        assert response.json()["disclosedAttributes"] == {"role": "staff"}
+
+    def test_legacy_badge_without_role_type_uses_institutional_role(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$unset": {"role_type": ""}},
+        )
+
+        response = scanToken(
+            client,
+            issueToken(client, disclose=["role"]),
+        )
+
+        assert response.json()["result"] == "pass"
+        assert response.json()["disclosedAttributes"] == {"role": "student"}
+
+    def test_generate_qr_rejects_invalid_badge_role(self, client, mongoDatabase):
+        registerUserWithPin(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$set": {"role_type": "visitor"}},
+        )
+
+        response = generateVerificationQr(client, disclose=["role"])
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Badge role type is invalid"
 
     def test_generate_qr_rejects_lifetime_outside_allowed_range(self, client):
         registerUserWithPin(client)
@@ -198,6 +279,8 @@ class TestScanBadgeVerification:
         assert body["signatureValid"] is True
         assert body["reasons"] == []
         assert body["badgeStatus"] == "issued"
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["referrer-policy"] == "no-referrer"
         assert body["disclosedAttributes"] == {
             "fullName": "Kevin Picado",
             "photoUrl": PHOTO_URL,
@@ -240,6 +323,8 @@ class TestScanBadgeVerification:
         postResponse = scanToken(client, qr["token"])
 
         assert getResponse.status_code == 200
+        assert getResponse.headers["cache-control"] == "no-store"
+        assert getResponse.headers["referrer-policy"] == "no-referrer"
         assert getResponse.json()["result"] == postResponse.json()["result"]
         assert (
             getResponse.json()["disclosedAttributes"]
@@ -291,11 +376,26 @@ class TestScanBadgeVerification:
         registerUserWithPin(client)
         token = issueToken(client)
 
-        monkeypatch.setenv("BADGE_TRACKING_SIGNING_KEY", "a-different-signing-key")
+        monkeypatch.setenv(
+            "BADGE_TRACKING_SIGNING_KEY",
+            "a-different-signing-key-with-at-least-32-bytes",
+        )
         response = scanToken(client, token)
 
         assert response.json()["result"] == "fail"
         assert response.json()["reasons"] == ["invalid_signature"]
+
+    def test_scan_requires_signing_key(self, client, monkeypatch):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        monkeypatch.delenv("BADGE_TRACKING_SIGNING_KEY")
+
+        response = scanToken(client, token)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == (
+            "BADGE_TRACKING_SIGNING_KEY must be configured"
+        )
 
     def test_malformed_scan_value_fails_without_error(self, client):
         response = scanToken(client, "not-a-badge-qr")
@@ -310,9 +410,10 @@ class TestScanBadgeVerification:
         registerUserWithPin(client)
         token = issueToken(client, expiresInSeconds=30)
 
-        expiredAt = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        now = datetime.now(timezone.utc)
         payload = decodePayload(token)
-        payload["exp"] = expiredAt
+        payload["iat"] = (now - timedelta(minutes=2)).isoformat()
+        payload["exp"] = (now - timedelta(seconds=1)).isoformat()
 
         # Re-sign through the same helper the API uses, so only expiry differs.
         from utils.signing import signPayload
@@ -323,6 +424,120 @@ class TestScanBadgeVerification:
         assert body["result"] == "fail"
         assert body["signatureValid"] is True
         assert body["reasons"] == ["expired"]
+        assert body["disclosedAttributes"]["fullName"] == "Kevin Picado"
+
+    def test_future_credential_returns_fail_with_signed_attributes(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        now = datetime.now(timezone.utc)
+        payload["iat"] = (now + timedelta(minutes=1)).isoformat()
+        payload["exp"] = (now + timedelta(minutes=3)).isoformat()
+
+        response = scanToken(client, signPayload(payload))
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["signatureValid"] is True
+        assert body["reasons"] == ["credential_not_yet_valid"]
+        assert body["disclosedAttributes"]["role"] == "student"
+
+    def test_signed_credential_with_invalid_expiry_fails_cleanly(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        payload["exp"] = "not-a-timestamp"
+
+        response = scanToken(client, signPayload(payload))
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["result"] == "fail"
+        assert body["signatureValid"] is True
+        assert body["reasons"] == ["malformed_token"]
+        assert body["disclosedAttributes"] == {}
+
+    def test_signed_credential_with_naive_timestamp_fails_cleanly(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        payload["exp"] = datetime.now().isoformat()
+
+        response = scanToken(client, signPayload(payload))
+
+        assert response.status_code == 200
+        assert response.json()["reasons"] == ["malformed_token"]
+
+    def test_signed_credential_with_non_positive_lifetime_fails_cleanly(
+        self,
+        client,
+    ):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        payload["exp"] = payload["iat"]
+
+        response = scanToken(client, signPayload(payload))
+
+        assert response.status_code == 200
+        assert response.json()["result"] == "fail"
+        assert response.json()["reasons"] == ["malformed_token"]
+
+    def test_signed_credential_cannot_exceed_maximum_lifetime(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        issuedAt = datetime.fromisoformat(payload["iat"])
+        payload["exp"] = (issuedAt + timedelta(seconds=901)).isoformat()
+
+        response = scanToken(client, signPayload(payload))
+
+        assert response.status_code == 200
+        assert response.json()["result"] == "fail"
+        assert response.json()["reasons"] == ["malformed_token"]
+        assert response.json()["disclosedAttributes"] == {}
+
+    def test_signed_credential_without_badge_id_fails_cleanly(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        payload.pop("bid")
+
+        response = scanToken(client, signPayload(payload))
+
+        assert response.status_code == 200
+        assert response.json()["result"] == "fail"
+        assert response.json()["reasons"] == ["malformed_token"]
+
+    def test_signed_non_object_payload_fails_cleanly(self, client):
+        from utils.signing import signPayload
+
+        response = scanToken(client, signPayload(["not", "an", "object"]))
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["result"] == "fail"
+        assert body["signatureValid"] is True
+        assert body["reasons"] == ["malformed_token"]
+
+    def test_signed_credential_with_unknown_attribute_fails_cleanly(self, client):
+        from utils.signing import signPayload
+
+        registerUserWithPin(client)
+        payload = decodePayload(issueToken(client))
+        payload["att"] = {"email": "kevin@utn.ac.cr"}
+
+        response = scanToken(client, signPayload(payload))
+
+        assert response.status_code == 200
+        assert response.json()["result"] == "fail"
+        assert response.json()["reasons"] == ["malformed_token"]
 
     def test_badge_revoked_after_issuing_fails(self, client, mongoDatabase):
         registerUserWithPin(client)
@@ -338,6 +553,148 @@ class TestScanBadgeVerification:
         assert body["result"] == "fail"
         assert body["reasons"] == ["badge_not_active"]
         assert body["badgeStatus"] == "revoked"
+        assert body["disclosedAttributes"]["fullName"] == "Kevin Picado"
+
+    def test_badge_expired_after_qr_generation_fails(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        now = datetime.now(timezone.utc)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {
+                "$set": {
+                    "valid_from": (now - timedelta(days=2)).isoformat(),
+                    "valid_until": (now - timedelta(seconds=1)).isoformat(),
+                }
+            },
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_expired"]
+        assert body["badgeStatus"] == "issued"
+
+    def test_badge_not_yet_valid_after_qr_generation_fails(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        now = datetime.now(timezone.utc)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {
+                "$set": {
+                    "valid_from": (now + timedelta(minutes=1)).isoformat(),
+                    "valid_until": (now + timedelta(days=1)).isoformat(),
+                }
+            },
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_not_yet_valid"]
+
+    def test_invalid_badge_validity_fails_cleanly(self, client, mongoDatabase):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$set": {"valid_until": "not-a-timestamp"}},
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_validity_invalid"]
+
+    def test_missing_badge_validity_fails_closed(self, client, mongoDatabase):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$unset": {"valid_until": ""}},
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_validity_invalid"]
+
+    def test_deleted_user_fails(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.users.delete_one({"institutional_id": "123456789"})
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["user_not_found"]
+
+    def test_deleted_badge_fails(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.badges.delete_one({"badge_code": {"$exists": True}})
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_not_found"]
+
+    def test_suspended_badge_fails(
+        self,
+        client,
+        mongoDatabase,
+    ):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$set": {"status": "suspended"}},
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_not_active"]
+        assert body["badgeStatus"] == "suspended"
+
+    def test_missing_badge_status_fails_cleanly(self, client, mongoDatabase):
+        registerUserWithPin(client)
+        token = issueToken(client)
+        mongoDatabase.badges.update_one(
+            {"badge_code": {"$exists": True}},
+            {"$unset": {"status": ""}},
+        )
+
+        response = scanToken(client, token)
+
+        body = response.json()
+        assert body["result"] == "fail"
+        assert body["reasons"] == ["badge_not_active"]
+        assert body["badgeStatus"] is None
 
     def test_deactivated_user_fails(self, client, mongoDatabase):
         registerUserWithPin(client)
@@ -362,6 +719,21 @@ class TestScanBadgeVerification:
         response = scanToken(client, signPayload(payload))
 
         assert response.json()["reasons"] == ["unsupported_credential_version"]
+
+    def test_future_credential_schema_is_reported_as_unsupported(self, client):
+        from utils.signing import signPayload
+
+        response = scanToken(
+            client,
+            signPayload({"v": 2, "futureCredential": "different-schema"}),
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["result"] == "fail"
+        assert body["signatureValid"] is True
+        assert body["reasons"] == ["unsupported_credential_version"]
+        assert body["disclosedAttributes"] == {}
 
     def test_scan_can_be_repeated_before_expiry(self, client):
         registerUserWithPin(client)
@@ -394,6 +766,8 @@ class TestScanBadgeVerification:
         )
         assert record["result"] == "pass"
         assert record["reasons"] == []
+        assert "token" not in record
+        assert "disclosed_attributes" not in record
         assert mongoDatabase.badge_verifications.count_documents({}) == 2
 
     def test_scan_rejects_empty_value(self, client):

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from models.user import (
     AgeProofQrResponse,
@@ -42,6 +42,7 @@ from services.user_service import (
     validateUserPin as validateUserPinService,
 )
 from utils.http_errors import serviceErrorsAsHttp
+from utils.signing import SigningConfigurationError
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -154,6 +155,7 @@ SHARE_QR_ERROR_STATUSES = {
     InvalidPinError: status.HTTP_401_UNAUTHORIZED,
     BirthDateNotSetError: status.HTTP_409_CONFLICT,
     BadgeNotShareableError: status.HTTP_409_CONFLICT,
+    SigningConfigurationError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 
@@ -187,7 +189,10 @@ def generateAgeProofQr(
 def generateBadgeVerificationQr(
     institutionalId: str,
     request: GenerateBadgeVerificationQrRequest,
+    response: Response,
 ) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     with serviceErrorsAsHttp(SHARE_QR_ERROR_STATUSES):
         return generateBadgeVerificationQrService(institutionalId, request)
 

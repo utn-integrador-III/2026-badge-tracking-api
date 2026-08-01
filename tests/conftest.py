@@ -14,6 +14,10 @@ def client(monkeypatch):
     connectionModule.closeDatabase()
     monkeypatch.setenv("BADGE_TRACKING_MONGODB_URI", "mongodb://localhost")
     monkeypatch.setenv("BADGE_TRACKING_MONGODB_DATABASE", databaseName)
+    monkeypatch.setenv(
+        "BADGE_TRACKING_SIGNING_KEY",
+        "test-only-signing-key-with-at-least-32-bytes",
+    )
     monkeypatch.setattr(connectionModule, "MongoClient", mongomock.MongoClient)
     connectionModule.initializeDatabase()
 

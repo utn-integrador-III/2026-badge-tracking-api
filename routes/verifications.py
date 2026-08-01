@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from models.user import (
     AgeProofVerificationResponse,
@@ -13,9 +13,21 @@ from services.user_service import (
     AgeProofTokenNotFoundError,
     verifyAgeProof as verifyAgeProofService,
 )
+from utils.http_errors import serviceErrorsAsHttp
+from utils.signing import SigningConfigurationError
 
 
 router = APIRouter(prefix="/verifications", tags=["Verifications"])
+
+
+SIGNING_ERROR_STATUSES = {
+    SigningConfigurationError: status.HTTP_503_SERVICE_UNAVAILABLE,
+}
+
+
+def _setSensitiveResponseHeaders(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
 
 
 @router.get(
@@ -41,8 +53,10 @@ def verifyAgeProof(token: str) -> dict:
     "/badge/{token}",
     response_model=BadgeVerificationResponse,
 )
-def verifyScannedBadgeToken(token: str) -> dict:
-    return verifyScannedBadgeService(token)
+def verifyScannedBadgeToken(token: str, response: Response) -> dict:
+    _setSensitiveResponseHeaders(response)
+    with serviceErrorsAsHttp(SIGNING_ERROR_STATUSES):
+        return verifyScannedBadgeService(token)
 
 
 @router.post(
@@ -50,5 +64,10 @@ def verifyScannedBadgeToken(token: str) -> dict:
     response_model=BadgeVerificationResponse,
     status_code=status.HTTP_200_OK,
 )
-def verifyScannedBadge(request: ScanBadgeVerificationRequest) -> dict:
-    return verifyScannedBadgeService(request.scannedValue)
+def verifyScannedBadge(
+    request: ScanBadgeVerificationRequest,
+    response: Response,
+) -> dict:
+    _setSensitiveResponseHeaders(response)
+    with serviceErrorsAsHttp(SIGNING_ERROR_STATUSES):
+        return verifyScannedBadgeService(request.scannedValue)

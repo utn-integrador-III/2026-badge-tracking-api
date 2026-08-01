@@ -5,22 +5,55 @@ import json
 import os
 
 
-DEVELOPMENT_ONLY_SIGNING_KEY = "development-only-badge-signing-key"
+MINIMUM_SIGNING_KEY_BYTES = 32
+FORBIDDEN_SIGNING_KEYS = frozenset(
+    {
+        "development-only-badge-signing-key",
+        "replace-with-a-random-secret-of-at-least-32-bytes",
+    }
+)
 
 
 class MalformedTokenError(Exception):
     pass
 
 
+class MalformedPayloadError(MalformedTokenError):
+    """Raised after a valid signature is found over an unreadable payload."""
+
+
 class InvalidSignatureError(Exception):
     pass
 
 
+class SigningConfigurationError(RuntimeError):
+    pass
+
+
 def getSigningKey() -> bytes:
-    return os.getenv(
-        "BADGE_TRACKING_SIGNING_KEY",
-        DEVELOPMENT_ONLY_SIGNING_KEY,
-    ).encode()
+    configuredKey = os.getenv("BADGE_TRACKING_SIGNING_KEY")
+    if not configuredKey or not configuredKey.strip():
+        raise SigningConfigurationError(
+            "BADGE_TRACKING_SIGNING_KEY must be configured"
+        )
+
+    if configuredKey != configuredKey.strip():
+        raise SigningConfigurationError(
+            "BADGE_TRACKING_SIGNING_KEY cannot have surrounding whitespace"
+        )
+
+    if configuredKey in FORBIDDEN_SIGNING_KEYS:
+        raise SigningConfigurationError(
+            "BADGE_TRACKING_SIGNING_KEY cannot use a known placeholder"
+        )
+
+    signingKey = configuredKey.encode()
+    if len(signingKey) < MINIMUM_SIGNING_KEY_BYTES:
+        raise SigningConfigurationError(
+            "BADGE_TRACKING_SIGNING_KEY must contain at least 32 bytes"
+        )
+
+    return signingKey
 
 
 def _encodeSegment(rawBytes: bytes) -> str:
@@ -62,6 +95,11 @@ def readSignedPayload(token: str) -> dict:
         raise InvalidSignatureError("Token signature is not valid")
 
     try:
-        return json.loads(_decodeSegment(payloadSegment))
-    except ValueError as error:
-        raise MalformedTokenError("Token payload could not be read") from error
+        payload = json.loads(_decodeSegment(payloadSegment))
+    except (UnicodeError, ValueError) as error:
+        raise MalformedPayloadError("Token payload could not be read") from error
+
+    if not isinstance(payload, dict):
+        raise MalformedPayloadError("Token payload must be a JSON object")
+
+    return payload
