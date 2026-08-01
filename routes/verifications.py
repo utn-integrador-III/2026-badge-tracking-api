@@ -1,6 +1,13 @@
 from fastapi import APIRouter, HTTPException, status
 
-from models.user import AgeProofVerificationResponse
+from models.user import (
+    AgeProofVerificationResponse,
+    BadgeVerificationResponse,
+    ScanBadgeVerificationRequest,
+)
+from services.badge_verification_service import (
+    verifyScannedBadge as verifyScannedBadgeService,
+)
 from services.user_service import (
     AgeProofTokenExpiredError,
     AgeProofTokenNotFoundError,
@@ -28,3 +35,20 @@ def verifyAgeProof(token: str) -> dict:
             status_code=status.HTTP_410_GONE,
             detail=str(error),
         ) from error
+
+
+@router.get(
+    "/badge/{token}",
+    response_model=BadgeVerificationResponse,
+)
+def verifyScannedBadgeToken(token: str) -> dict:
+    return verifyScannedBadgeService(token)
+
+
+@router.post(
+    "/badge",
+    response_model=BadgeVerificationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def verifyScannedBadge(request: ScanBadgeVerificationRequest) -> dict:
+    return verifyScannedBadgeService(request.scannedValue)

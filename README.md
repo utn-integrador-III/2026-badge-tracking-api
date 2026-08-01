@@ -21,10 +21,17 @@ Optional environment variables:
 BADGE_TRACKING_MONGODB_URI=mongodb://localhost:27017
 BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 BADGE_TRACKING_VERIFICATION_BASE_URL=http://127.0.0.1:8000
+BADGE_TRACKING_SIGNING_KEY=change-me-in-every-deployed-environment
 ```
 
 `BADGE_TRACKING_VERIFICATION_BASE_URL` is the public base URL encoded into the
-age proof QR codes. Set it to the deployed API URL so scanned codes resolve.
+QR codes. Set it to the deployed API URL so scanned codes resolve.
+
+`BADGE_TRACKING_SIGNING_KEY` signs badge verification credentials (US-07). It
+falls back to a well-known development value, so **it must be set to a private
+random value in every deployed environment**. Anyone holding this key can mint
+badges that pass verification. Rotating it invalidates QR codes already issued,
+which is harmless because they expire within minutes anyway.
 
 ## Run API
 
@@ -258,6 +265,146 @@ Error responses:
 410 Age proof QR code has expired
 422 Invalid institutional ID or request body
 ```
+
+## US-07 Verify a Badge (QR Scan)
+
+The badge holder generates a signed verification QR and chooses which attributes
+it discloses. A verifier (security desk, registrar) scans it and receives a
+cryptographic pass/fail verdict together with those attributes.
+
+### Generate QR (badge holder, PIN required)
+
+```http
+POST /users/{institutionalId}/verification-qr
+```
+
+Example body:
+
+```json
+{
+  "pin": "281992",
+  "disclose": ["fullName", "photoUrl", "role"],
+  "expiresInSeconds": 120
+}
+```
+
+Disclosable attributes:
+
+```text
+fullName, photoUrl, role, institutionalId, badgeCode
+```
+
+`disclose` defaults to `["fullName", "photoUrl", "role"]`, cannot be empty and
+cannot repeat a value. `expiresInSeconds` defaults to `120` and must be between
+`30` and `900`. Disclosing fewer attributes produces a smaller, easier to scan
+QR code.
+
+Response:
+
+```json
+{
+  "token": "eyJhdHQiOns...Q.mS0y7xLbUq8...",
+  "verificationUrl": "http://127.0.0.1:8000/verifications/badge/eyJhdHQiOns...",
+  "qrCodeImage": "data:image/png;base64,iVBORw0KGgo...",
+  "disclosedAttributes": ["fullName", "photoUrl", "role"],
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:33:35.129776+00:00",
+  "expiresInSeconds": 120
+}
+```
+
+### Scan and verify (verifier, no authentication)
+
+Scanner applications post the raw scanned string, which may be the full URL or
+the bare token:
+
+```http
+POST /verifications/badge
+```
+
+```json
+{
+  "scannedValue": "http://127.0.0.1:8000/verifications/badge/eyJhdHQiOns..."
+}
+```
+
+A phone camera that opens the scanned URL directly hits the same check:
+
+```http
+GET /verifications/badge/{token}
+```
+
+Response:
+
+```json
+{
+  "result": "pass",
+  "signatureValid": true,
+  "reasons": [],
+  "disclosedAttributes": {
+    "fullName": "Kevin Picado",
+    "photoUrl": "https://example.com/profile-photo.png",
+    "role": "student"
+  },
+  "badgeStatus": "issued",
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:33:35.129776+00:00",
+  "verifiedAt": "2026-08-01T12:31:35.222674+00:00",
+  "verificationId": "a1154bb59a2d4c7d9b920b38b7fc08e6"
+}
+```
+
+Both endpoints always answer `200`. A rejected badge is a business outcome the
+desk has to display, not a transport error, so failures come back as
+`"result": "fail"` with the reasons filled in:
+
+```json
+{
+  "result": "fail",
+  "signatureValid": false,
+  "reasons": ["invalid_signature"],
+  "disclosedAttributes": {},
+  "badgeStatus": null,
+  "issuedAt": null,
+  "expiresAt": null,
+  "verifiedAt": "2026-08-01T12:31:35.225405+00:00",
+  "verificationId": "d9191d39b9be40e8b07d073166726d53"
+}
+```
+
+Failure reasons:
+
+```text
+malformed_token                 scanned value is not a badge credential
+invalid_signature               payload was edited or signed with another key
+unsupported_credential_version  credential format the API cannot verify
+expired                         QR code is past its expiry
+user_not_found                  holder no longer exists
+user_inactive                   holder account was deactivated
+badge_not_found                 holder has no badge
+badge_not_active                badge was revoked or suspended
+```
+
+`422` is returned only when the request body itself is invalid, for example an
+empty `scannedValue`.
+
+### How the check works
+
+```text
+The QR carries a signed credential: base64url(payload).base64url(HMAC-SHA256)
+The payload holds the holder id, issue and expiry timestamps, and the
+attributes the holder chose to disclose.
+```
+
+- Attributes are **inside** the signature, so editing the name or role in the QR
+  breaks verification instead of fooling the desk.
+- Attributes are returned **only when the signature is valid**. An unverified
+  payload is never echoed back, so a forged QR cannot put a name on the screen.
+- Signature validity alone is not a pass. Every scan re-reads the holder and
+  badge from the database, so a badge revoked after the QR was generated fails
+  even while the signature is still valid.
+- Every scan is recorded in `badge_verifications` with its own `verificationId`,
+  the outcome and the reasons, giving the registrar an audit trail.
 
 ## Tests
 
