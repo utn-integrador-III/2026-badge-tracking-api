@@ -90,7 +90,7 @@ def _getNextSequence(sequenceName: str) -> int:
     return int(sequence["value"])
 
 
-def _assertValidInstitutionalId(institutionalId: str) -> None:
+def assertValidInstitutionalId(institutionalId: str) -> None:
     if not re.fullmatch(r"\d{9}", institutionalId):
         raise InvalidInstitutionalIdError(
             "Institutional ID must contain exactly 9 digits"
@@ -182,7 +182,7 @@ def registerInstitutionalIdentity(
 
 
 def getDigitalBadgeProfile(institutionalId: str) -> dict:
-    _assertValidInstitutionalId(institutionalId)
+    assertValidInstitutionalId(institutionalId)
 
     database = getDatabase()
     user = database.users.find_one(
@@ -234,7 +234,7 @@ def calculateDefaultValidUntil(validFrom: str) -> str:
 
 
 def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
-    _assertValidInstitutionalId(institutionalId)
+    assertValidInstitutionalId(institutionalId)
 
     if request.pin != request.pinConfirm:
         raise PinMismatchError("PIN and PIN confirmation do not match")
@@ -271,8 +271,8 @@ def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
 
 
 def validateUserPin(institutionalId: str, pin: str) -> dict:
-    _assertValidInstitutionalId(institutionalId)
-    _authenticateBadgeHolder(institutionalId, pin)
+    assertValidInstitutionalId(institutionalId)
+    authenticateBadgeHolder(institutionalId, pin)
 
     return {
         "valid": True,
@@ -307,13 +307,16 @@ def _calculateAge(birthDate: str, referenceDate: date) -> int:
     return age
 
 
-def _authenticateBadgeHolder(institutionalId: str, pin: str) -> dict[str, Any]:
+def authenticateBadgeHolder(institutionalId: str, pin: str) -> dict[str, Any]:
     database = getDatabase()
     user: dict[str, Any] | None = database.users.find_one(
         {"institutional_id": institutionalId},
         {
             "id": 1,
+            "full_name": 1,
             "role": 1,
+            "institutional_id": 1,
+            "photo_url": 1,
             "birth_date": 1,
             "pin_hash": 1,
             "is_active": 1,
@@ -341,9 +344,9 @@ def generateAgeProofQr(
     institutionalId: str,
     request: GenerateAgeProofQrRequest,
 ) -> dict:
-    _assertValidInstitutionalId(institutionalId)
+    assertValidInstitutionalId(institutionalId)
 
-    user = _authenticateBadgeHolder(institutionalId, request.pin)
+    user = authenticateBadgeHolder(institutionalId, request.pin)
 
     if not user.get("birth_date"):
         raise BirthDateNotSetError(
