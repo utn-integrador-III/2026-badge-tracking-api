@@ -69,8 +69,10 @@ Example body:
 Allowed roles:
 
 ```text
-student, professor, staff
+student, professor, staff, admin
 ```
+
+Only an `admin` can issue badges to other users (see US-10).
 
 `institutionalId` is the person's Costa Rican ID number. It must contain exactly
 9 digits.
@@ -405,6 +407,154 @@ attributes the holder chose to disclose.
   even while the signature is still valid.
 - Every scan is recorded in `badge_verifications` with its own `verificationId`,
   the outcome and the reasons, giving the registrar an audit trail.
+
+## US-10 Issue a New Badge to a User
+
+An institutional admin creates a badge record tied to a user, sets its role
+type, and triggers issuance to the user's device.
+
+### Issue a badge (admin)
+
+```http
+POST /badges
+```
+
+Example body:
+
+```json
+{
+  "adminInstitutionalId": "900000001",
+  "adminPin": "481726",
+  "institutionalId": "123456789",
+  "roleType": "staff",
+  "validForDays": 180
+}
+```
+
+The admin authenticates with their own institutional ID and PIN, and must have
+the `admin` role. `roleType` defaults to the holder's institutional role, so an
+admin can issue a staff badge to someone registered as a student without
+changing who that person is. `validForDays` defaults to `365` and must be
+between `1` and `1825`.
+
+Response:
+
+```json
+{
+  "message": "Badge issued successfully",
+  "badge": {
+    "id": 3,
+    "userId": 2,
+    "badgeCode": "BADGE-123456789-47B30953",
+    "roleType": "staff",
+    "status": "issued",
+    "issuedAt": "2026-08-01T13:03:27.300024+00:00",
+    "validFrom": "2026-08-01T13:03:27.300024+00:00",
+    "validUntil": "2027-01-28T13:03:27.300024+00:00"
+  },
+  "supersededBadgeId": 2,
+  "delivery": {
+    "deliveryId": "cd159b62463544c986363533d21d5055",
+    "badgeId": 3,
+    "badgeCode": "BADGE-123456789-47B30953",
+    "roleType": "staff",
+    "status": "pending",
+    "validFrom": "2026-08-01T13:03:27.300024+00:00",
+    "validUntil": "2027-01-28T13:03:27.300024+00:00",
+    "triggeredAt": "2026-08-01T13:03:27.300024+00:00",
+    "deliveredAt": null
+  }
+}
+```
+
+Error responses:
+
+```text
+401 Invalid PIN
+403 Only an institutional admin can issue badges
+404 User not found (admin) / Badge holder was not found
+409 No PIN has been set for the admin
+422 Invalid institutional ID, role type or validity period
+```
+
+### A user holds several badges over time
+
+Issuing a badge marks the holder's previous active badge as `superseded` and
+returns its id as `supersededBadgeId`. Badge records are kept rather than
+overwritten, so the history of what was issued to whom stays auditable.
+
+```text
+issued      the badge the holder currently carries
+superseded  replaced by a newer badge
+revoked     withdrawn by the institution
+```
+
+Only `issued` badges verify. A verification QR generated from a badge that was
+later replaced fails with `badge_not_active` and `badgeStatus: "superseded"`,
+because US-07 credentials name the badge they were minted from.
+
+`GET /users/{institutionalId}/badge-profile` shows the newest badge.
+
+### Delivery to the user's device
+
+Issuance triggers a delivery the holder's device collects. The device proves it
+belongs to the holder with the PIN.
+
+Fetch what is waiting:
+
+```http
+POST /users/{institutionalId}/badge-deliveries/fetch
+```
+
+```json
+{ "pin": "281992" }
+```
+
+Response:
+
+```json
+{
+  "institutionalId": "123456789",
+  "deliveries": [
+    {
+      "deliveryId": "cd159b62463544c986363533d21d5055",
+      "badgeId": 3,
+      "badgeCode": "BADGE-123456789-47B30953",
+      "roleType": "staff",
+      "status": "pending",
+      "validFrom": "2026-08-01T13:03:27.300024+00:00",
+      "validUntil": "2027-01-28T13:03:27.300024+00:00",
+      "triggeredAt": "2026-08-01T13:03:27.300024+00:00",
+      "deliveredAt": null
+    }
+  ]
+}
+```
+
+Confirm installation:
+
+```http
+POST /users/{institutionalId}/badge-deliveries/{deliveryId}/acknowledge
+```
+
+```json
+{ "pin": "281992" }
+```
+
+The delivery moves to `delivered` with a `deliveredAt` timestamp and stops
+appearing in fetches. Acknowledging twice is safe and keeps the original
+delivery time.
+
+Delivery statuses:
+
+```text
+pending     triggered, waiting for the device to collect it
+delivered   the device confirmed it installed the badge
+superseded  replaced by a newer badge before the device collected it
+```
+
+Registration also triggers a delivery for the badge it issues, so the first
+badge reaches the device through the same path as every later one.
 
 ## Tests
 

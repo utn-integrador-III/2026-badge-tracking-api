@@ -6,7 +6,11 @@ def test_initialize_database_creates_required_indexes(mongoDatabase):
     assert userIndexes["unique_user_email"]["unique"] is True
     assert "unique_user_institutional_id" in userIndexes
     assert userIndexes["unique_user_institutional_id"]["unique"] is True
-    assert "unique_badge_user_id" in badgeIndexes
-    assert badgeIndexes["unique_badge_user_id"]["unique"] is True
     assert "unique_badge_code" in badgeIndexes
     assert badgeIndexes["unique_badge_code"]["unique"] is True
+
+    # Reissuing gives a user several badges over time, so user_id is indexed
+    # for lookups but is deliberately not unique.
+    assert "badge_user_status" in badgeIndexes
+    assert badgeIndexes["badge_user_status"].get("unique") is None
+    assert "unique_badge_user_id" not in badgeIndexes

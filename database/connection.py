@@ -44,10 +44,10 @@ def initializeDatabase() -> None:
         unique=True,
         name="unique_user_id",
     )
+    # A user accumulates badges as admins reissue them, so this is not unique.
     database.badges.create_index(
-        [("user_id", ASCENDING)],
-        unique=True,
-        name="unique_badge_user_id",
+        [("user_id", ASCENDING), ("status", ASCENDING)],
+        name="badge_user_status",
     )
     database.badges.create_index(
         [("badge_code", ASCENDING)],
@@ -76,6 +76,15 @@ def initializeDatabase() -> None:
     database.badge_verifications.create_index(
         [("user_id", ASCENDING), ("verified_at", ASCENDING)],
         name="badge_verification_user_time",
+    )
+    database.badge_deliveries.create_index(
+        [("delivery_id", ASCENDING)],
+        unique=True,
+        name="unique_badge_delivery_id",
+    )
+    database.badge_deliveries.create_index(
+        [("user_id", ASCENDING), ("status", ASCENDING)],
+        name="badge_delivery_user_status",
     )
 
 
