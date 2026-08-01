@@ -59,6 +59,15 @@ def initializeDatabase() -> None:
         unique=True,
         name="unique_badge_id",
     )
+    database.age_proof_tokens.create_index(
+        [("token_hash", ASCENDING)],
+        unique=True,
+        name="unique_age_proof_token_hash",
+    )
+    database.age_proof_tokens.create_index(
+        [("user_id", ASCENDING), ("expires_at", ASCENDING)],
+        name="age_proof_token_user_expiry",
+    )
 
 
 def closeDatabase() -> None:
