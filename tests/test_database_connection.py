@@ -1,6 +1,7 @@
 def test_initialize_database_creates_required_indexes(mongoDatabase):
     userIndexes = mongoDatabase.users.index_information()
     badgeIndexes = mongoDatabase.badges.index_information()
+    deliveryIndexes = mongoDatabase.badge_deliveries.index_information()
 
     assert "unique_user_email" in userIndexes
     assert userIndexes["unique_user_email"]["unique"] is True
@@ -14,3 +15,4 @@ def test_initialize_database_creates_required_indexes(mongoDatabase):
     assert "badge_user_status" in badgeIndexes
     assert badgeIndexes["badge_user_status"].get("unique") is None
     assert "unique_badge_user_id" not in badgeIndexes
+    assert "badge_delivery_badge_status" in deliveryIndexes
