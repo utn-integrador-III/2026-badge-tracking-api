@@ -1,6 +1,9 @@
+import hashlib
+import os
 import re
+import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
@@ -8,7 +11,16 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from database.connection import getDatabase
-from models.user import RegisterInstitutionalIdentityRequest, SetPinRequest
+from models.user import (
+    GenerateAgeProofQrRequest,
+    RegisterInstitutionalIdentityRequest,
+    SetPinRequest,
+)
+from utils.qr_code import buildQrCodeDataUri
+
+
+DEFAULT_VERIFICATION_BASE_URL = "http://127.0.0.1:8000"
+SHAREABLE_BADGE_STATUSES = frozenset({"issued", "active"})
 
 
 class DuplicateUserError(Exception):
@@ -40,6 +52,22 @@ class PinMismatchError(Exception):
 
 
 class InvalidPinError(Exception):
+    pass
+
+
+class BirthDateNotSetError(Exception):
+    pass
+
+
+class BadgeNotShareableError(Exception):
+    pass
+
+
+class AgeProofTokenNotFoundError(Exception):
+    pass
+
+
+class AgeProofTokenExpiredError(Exception):
     pass
 
 
@@ -102,6 +130,7 @@ def registerInstitutionalIdentity(
         "role": request.role.value,
         "institutional_id": request.institutionalId,
         "photo_url": request.photoUrl,
+        "birth_date": request.birthDate,
         "is_active": True,
         "created_at": createdAt,
         "pin_hash": None,
@@ -243,11 +272,52 @@ def setUserPin(institutionalId: str, request: SetPinRequest) -> dict:
 
 def validateUserPin(institutionalId: str, pin: str) -> dict:
     _assertValidInstitutionalId(institutionalId)
+    _authenticateBadgeHolder(institutionalId, pin)
 
+    return {
+        "valid": True,
+        "institutionalId": institutionalId,
+        "message": "PIN validated successfully",
+    }
+
+
+def getVerificationBaseUrl() -> str:
+    baseUrl = os.getenv(
+        "BADGE_TRACKING_VERIFICATION_BASE_URL",
+        DEFAULT_VERIFICATION_BASE_URL,
+    )
+    return baseUrl.rstrip("/")
+
+
+def _hashAgeProofToken(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _calculateAge(birthDate: str, referenceDate: date) -> int:
+    parsedBirthDate = date.fromisoformat(birthDate)
+    age = referenceDate.year - parsedBirthDate.year
+
+    hasHadBirthdayThisYear = (referenceDate.month, referenceDate.day) >= (
+        parsedBirthDate.month,
+        parsedBirthDate.day,
+    )
+    if not hasHadBirthdayThisYear:
+        age -= 1
+
+    return age
+
+
+def _authenticateBadgeHolder(institutionalId: str, pin: str) -> dict[str, Any]:
     database = getDatabase()
     user: dict[str, Any] | None = database.users.find_one(
         {"institutional_id": institutionalId},
-        {"institutional_id": 1, "pin_hash": 1, "is_active": 1},
+        {
+            "id": 1,
+            "role": 1,
+            "birth_date": 1,
+            "pin_hash": 1,
+            "is_active": 1,
+        },
     )
 
     if not user:
@@ -264,8 +334,104 @@ def validateUserPin(institutionalId: str, pin: str) -> dict:
     if not _verifyPin(pin, user["pin_hash"]):
         raise InvalidPinError("Invalid PIN")
 
+    return user
+
+
+def generateAgeProofQr(
+    institutionalId: str,
+    request: GenerateAgeProofQrRequest,
+) -> dict:
+    _assertValidInstitutionalId(institutionalId)
+
+    user = _authenticateBadgeHolder(institutionalId, request.pin)
+
+    if not user.get("birth_date"):
+        raise BirthDateNotSetError(
+            "No date of birth is registered for this user, so age cannot be proven."
+        )
+
+    database = getDatabase()
+    badge = database.badges.find_one(
+        {"user_id": user["id"]},
+        {"status": 1},
+    )
+
+    if not badge:
+        raise UserBadgeProfileNotFoundError("Badge profile was not found")
+
+    if badge["status"] not in SHAREABLE_BADGE_STATUSES:
+        raise BadgeNotShareableError(
+            f"Badge status '{badge['status']}' cannot be shared for verification"
+        )
+
+    issuedAtDate = datetime.now(timezone.utc)
+    expiresAtDate = issuedAtDate + timedelta(seconds=request.expiresInSeconds)
+    issuedAt = issuedAtDate.isoformat()
+    expiresAt = expiresAtDate.isoformat()
+
+    age = _calculateAge(user["birth_date"], issuedAtDate.date())
+    meetsMinimumAge = age >= request.minimumAge
+
+    database.age_proof_tokens.delete_many(
+        {"user_id": user["id"], "expires_at": {"$lt": issuedAt}}
+    )
+
+    token = secrets.token_urlsafe(32)
+    database.age_proof_tokens.insert_one(
+        {
+            "token_hash": _hashAgeProofToken(token),
+            "user_id": user["id"],
+            "minimum_age": request.minimumAge,
+            "meets_minimum_age": meetsMinimumAge,
+            "role": user["role"],
+            "badge_status": badge["status"],
+            "issued_at": issuedAt,
+            "expires_at": expiresAt,
+        }
+    )
+
+    verificationUrl = f"{getVerificationBaseUrl()}/verifications/age-proof/{token}"
+
+    return {
+        "token": token,
+        "verificationUrl": verificationUrl,
+        "qrCodeImage": buildQrCodeDataUri(verificationUrl),
+        "minimumAge": request.minimumAge,
+        "meetsMinimumAge": meetsMinimumAge,
+        "issuedAt": issuedAt,
+        "expiresAt": expiresAt,
+        "expiresInSeconds": request.expiresInSeconds,
+    }
+
+
+def verifyAgeProof(token: str) -> dict:
+    database = getDatabase()
+    ageProof: dict[str, Any] | None = database.age_proof_tokens.find_one(
+        {"token_hash": _hashAgeProofToken(token)},
+        {
+            "minimum_age": 1,
+            "meets_minimum_age": 1,
+            "role": 1,
+            "badge_status": 1,
+            "issued_at": 1,
+            "expires_at": 1,
+        },
+    )
+
+    if not ageProof:
+        raise AgeProofTokenNotFoundError("Age proof QR code was not found")
+
+    verifiedAtDate = datetime.now(timezone.utc)
+    if verifiedAtDate >= datetime.fromisoformat(ageProof["expires_at"]):
+        raise AgeProofTokenExpiredError("Age proof QR code has expired")
+
     return {
         "valid": True,
-        "institutionalId": institutionalId,
-        "message": "PIN validated successfully",
+        "minimumAge": ageProof["minimum_age"],
+        "meetsMinimumAge": ageProof["meets_minimum_age"],
+        "role": ageProof["role"],
+        "badgeStatus": ageProof["badge_status"],
+        "issuedAt": ageProof["issued_at"],
+        "expiresAt": ageProof["expires_at"],
+        "verifiedAt": verifiedAtDate.isoformat(),
     }

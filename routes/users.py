@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException, status
 
 from models.user import (
+    AgeProofQrResponse,
     BadgeProfileResponse,
+    GenerateAgeProofQrRequest,
     RegisterInstitutionalIdentityRequest,
     RegisterInstitutionalIdentityResponse,
     SetPinRequest,
@@ -10,6 +12,8 @@ from models.user import (
     ValidatePinResponse,
 )
 from services.user_service import (
+    BadgeNotShareableError,
+    BirthDateNotSetError,
     DuplicateUserError,
     InvalidInstitutionalIdError,
     InvalidPinError,
@@ -18,6 +22,7 @@ from services.user_service import (
     PinNotSetError,
     UserBadgeProfileNotFoundError,
     UserNotFoundError,
+    generateAgeProofQr as generateAgeProofQrService,
     getDigitalBadgeProfile as getDigitalBadgeProfileService,
     registerInstitutionalIdentity as registerInstitutionalIdentityService,
     setUserPin as setUserPinService,
@@ -123,5 +128,53 @@ def validateUserPin(institutionalId: str, request: ValidatePinRequest) -> dict:
     except InvalidPinError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+        ) from error
+
+
+@router.post(
+    "/{institutionalId}/age-proof-qr",
+    response_model=AgeProofQrResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def generateAgeProofQr(
+    institutionalId: str,
+    request: GenerateAgeProofQrRequest,
+) -> dict:
+    try:
+        return generateAgeProofQrService(institutionalId, request)
+    except InvalidInstitutionalIdError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except UserBadgeProfileNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except PinNotSetError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except InvalidPinError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+        ) from error
+    except BirthDateNotSetError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except BadgeNotShareableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
