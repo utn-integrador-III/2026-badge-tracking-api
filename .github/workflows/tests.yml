@@ -24,4 +24,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest tests -v --cov=models --cov=routes --cov=services --cov=database
+        run: >-
+          python -m pytest tests -v
+          --cov=models
+          --cov=routes
+          --cov=services
+          --cov=database
+          --cov=utils
+          --cov-branch
+          --cov-report=term-missing
+          --cov-fail-under=80
