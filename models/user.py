@@ -1,6 +1,10 @@
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+MAX_REALISTIC_AGE_IN_YEARS = 120
 
 
 class UserRole(str, Enum):
@@ -17,6 +21,10 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
     role: UserRole
     institutionalId: str = Field(min_length=9, max_length=9, pattern=r"^\d{9}$")
     photoUrl: str | None = Field(default=None, max_length=255)
+    birthDate: str | None = Field(
+        default=None,
+        description="Date of birth in YYYY-MM-DD format. Required to share age proof.",
+    )
 
     @field_validator("fullName", "email", "institutionalId")
     @classmethod
@@ -45,6 +53,30 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
 
         cleanedValue = value.strip()
         return cleanedValue or None
+
+    @field_validator("birthDate")
+    @classmethod
+    def validateBirthDate(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleanedValue = value.strip()
+        if not cleanedValue:
+            return None
+
+        try:
+            birthDate = date.fromisoformat(cleanedValue)
+        except ValueError as error:
+            raise ValueError("Birth date must use the YYYY-MM-DD format") from error
+
+        today = datetime.now(timezone.utc).date()
+        if birthDate >= today:
+            raise ValueError("Birth date must be in the past")
+
+        if birthDate < date(today.year - MAX_REALISTIC_AGE_IN_YEARS, 1, 1):
+            raise ValueError("Birth date is not realistic")
+
+        return birthDate.isoformat()
 
 
 class UserResponse(BaseModel):
@@ -150,3 +182,54 @@ class ValidatePinResponse(BaseModel):
     valid: bool
     institutionalId: str
     message: str
+
+
+class GenerateAgeProofQrRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="Badge holder PIN, required to authorize the share",
+    )
+    minimumAge: int = Field(
+        default=18,
+        ge=1,
+        le=MAX_REALISTIC_AGE_IN_YEARS,
+        description="Age threshold the verifying party needs to confirm",
+    )
+    expiresInSeconds: int = Field(
+        default=120,
+        ge=30,
+        le=900,
+        description="Lifetime of the QR code, between 30 and 900 seconds",
+    )
+
+    @field_validator("pin")
+    @classmethod
+    def validatePinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+
+class AgeProofQrResponse(BaseModel):
+    token: str
+    verificationUrl: str
+    qrCodeImage: str
+    minimumAge: int
+    meetsMinimumAge: bool
+    issuedAt: str
+    expiresAt: str
+    expiresInSeconds: int
+
+
+class AgeProofVerificationResponse(BaseModel):
+    valid: bool
+    minimumAge: int
+    meetsMinimumAge: bool
+    role: UserRole
+    badgeStatus: str
+    issuedAt: str
+    expiresAt: str
+    verifiedAt: str
