@@ -485,13 +485,16 @@ overwritten, so the history of what was issued to whom stays auditable.
 
 ```text
 issued      the badge the holder currently carries
+active      legacy value for a current badge
+suspended   temporarily disabled by the institution
 superseded  replaced by a newer badge
-revoked     withdrawn by the institution
+revoked     permanently withdrawn by the institution
 ```
 
-Only `issued` badges verify. A verification QR generated from a badge that was
-later replaced fails with `badge_not_active` and `badgeStatus: "superseded"`,
-because US-07 credentials name the badge they were minted from.
+Only `issued` badges and legacy `active` badges verify. A verification QR
+generated from a badge that was later suspended, revoked or replaced fails with
+`badge_not_active`, because US-07 credentials name the exact badge they were
+minted from.
 
 `GET /users/{institutionalId}/badge-profile` shows the newest badge.
 
@@ -551,10 +554,171 @@ Delivery statuses:
 pending     triggered, waiting for the device to collect it
 delivered   the device confirmed it installed the badge
 superseded  replaced by a newer badge before the device collected it
+cancelled   suspended or revoked before the device collected it
 ```
 
 Registration also triggers a delivery for the badge it issues, so the first
 badge reaches the device through the same path as every later one.
+
+## US-11 Revoke or Suspend a Badge
+
+An institutional admin can find a badge holder and suspend or permanently
+revoke a specific badge. Both actions take effect immediately while preserving
+the badge record and its status history for audit purposes.
+
+### Search for a badge holder (admin)
+
+Endpoint:
+
+```http
+POST /badges/search
+```
+
+Example body:
+
+```json
+{
+  "adminInstitutionalId": "900000001",
+  "adminPin": "481726",
+  "query": "123456789",
+  "limit": 20
+}
+```
+
+`query` accepts an institutional ID, full name or email. Name and email matches
+are case-insensitive, and special regular-expression characters are treated as
+literal text. The query must contain between `2` and `150` characters after
+trimming. `limit` defaults to `20` and must be between `1` and `50`.
+
+Response:
+
+```json
+{
+  "count": 1,
+  "results": [
+    {
+      "userId": 2,
+      "fullName": "Kevin Picado",
+      "email": "kevin.picado@utn.ac.cr",
+      "institutionalId": "123456789",
+      "role": "student",
+      "isActive": true,
+      "badge": {
+        "id": 2,
+        "userId": 2,
+        "badgeCode": "BADGE-123456789-ABC12345",
+        "roleType": "student",
+        "status": "issued",
+        "issuedAt": "2026-08-01T13:03:27.300024+00:00",
+        "validFrom": "2026-08-01T13:03:27.300024+00:00",
+        "validUntil": "2027-08-01T13:03:27.300024+00:00"
+      }
+    }
+  ]
+}
+```
+
+A matching user without a badge is returned with `"badge": null`. A search
+with no matches returns `200 OK` with `count: 0` and an empty `results` list.
+
+### Change a badge status (admin)
+
+The path identifies the exact badge to change, which avoids affecting another
+badge that may have been issued to the same holder.
+
+```http
+PATCH /badges/{badgeId}/status
+```
+
+Example:
+
+```http
+PATCH /badges/2/status
+```
+
+```json
+{
+  "adminInstitutionalId": "900000001",
+  "adminPin": "481726",
+  "status": "revoked",
+  "reason": "Graduation completed"
+}
+```
+
+`status` accepts only `suspended` or `revoked`. `reason` is required, is trimmed
+before storage and must contain between `3` and `250` characters.
+
+Response:
+
+```json
+{
+  "message": "Badge revoked successfully",
+  "badge": {
+    "id": 2,
+    "userId": 2,
+    "badgeCode": "BADGE-123456789-ABC12345",
+    "roleType": "student",
+    "status": "revoked",
+    "issuedAt": "2026-08-01T13:03:27.300024+00:00",
+    "validFrom": "2026-08-01T13:03:27.300024+00:00",
+    "validUntil": "2027-08-01T13:03:27.300024+00:00"
+  },
+  "previousStatus": "issued",
+  "changed": true,
+  "changedAt": "2026-08-01T15:42:10.184233+00:00",
+  "reason": "Graduation completed"
+}
+```
+
+Allowed transitions:
+
+```text
+issued or active  -> suspended or revoked
+suspended         -> revoked
+revoked           -> terminal; it cannot return to suspended
+superseded        -> terminal; it cannot be suspended or revoked
+```
+
+Repeating the same requested status is idempotent. It returns `200 OK` with
+`changed: false` and preserves the timestamp, reason and audit data from the
+original change instead of creating another transition.
+
+Both endpoints authenticate the admin using their institutional ID and PIN and
+require the `admin` role and a current badge. Revoking or suspending an admin's
+badge therefore removes their badge-management access. The status update records
+the previous and new status, UTC timestamp, reason and internal ID of the admin
+who performed it. Actual transitions are retained in the badge status history.
+The holder identity stays active, so the institution can issue a new badge later
+without altering the historical record.
+
+The current prototype creates admin identities through the shared registration
+flow. A production deployment must restrict admin-role provisioning and initial
+PIN enrollment to a trusted institutional process.
+
+Suspension and revocation immediately affect every verification path:
+
+```text
+existing signed badge QR  returns fail with badge_not_active
+existing age-proof QR     returns valid: false with the current badge status
+new QR or age proof       is rejected while the badge is inactive
+pending device delivery   moves to cancelled and is no longer returned to the device
+```
+
+Delivered records remain available as history. Only pending deliveries tied to
+the affected badge are cancelled.
+
+Age-proof tokens created before this version do not contain a badge ID and fail
+closed until they expire. Their maximum lifetime is 15 minutes.
+
+Error responses:
+
+```text
+401 Invalid admin PIN
+403 The authenticated user is not an active institutional admin
+404 Admin user or target badge was not found
+409 The admin has no PIN / the requested status transition is not allowed
+422 Invalid badge id, institutional ID, query, limit, status or reason
+```
 
 ## Tests
 
