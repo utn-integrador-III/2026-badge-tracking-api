@@ -86,6 +86,10 @@ def initializeDatabase() -> None:
         [("user_id", ASCENDING), ("status", ASCENDING)],
         name="badge_delivery_user_status",
     )
+    database.badge_deliveries.create_index(
+        [("badge_id", ASCENDING), ("status", ASCENDING)],
+        name="badge_delivery_badge_status",
+    )
 
 
 def closeDatabase() -> None:
