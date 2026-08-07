@@ -70,7 +70,8 @@ Example body:
   "birthDate": "1992-08-28",
   "nationality": "Costa Rican",
   "birthplace": "San Jose, Costa Rica",
-  "documentExpiry": "2031-05-20"
+  "documentExpiry": "2031-05-20",
+  "digitalSignatureUrl": "https://identity.utn.ac.cr/signatures/123456789.png"
 }
 ```
 
@@ -92,6 +93,10 @@ any endpoint; it is only used to answer age proof checks (see US-05).
 with existing identities. `documentExpiry` is the expiry date of the holder's
 physical identity document and uses `YYYY-MM-DD`; it is separate from the badge
 validity period.
+
+`digitalSignatureUrl` is optional and points to the holder's enrolled visual
+signature. It must use HTTPS, cannot contain URL credentials, and is limited to
+2,048 characters. Blank values are stored as `null`.
 
 ## US-02 Authenticate via PIN
 
@@ -774,7 +779,8 @@ Response:
   "issuingAuthority": "Universidad Técnica Nacional",
   "nationality": "Costa Rican",
   "birthplace": "San Jose, Costa Rica",
-  "documentExpiry": "2031-05-20"
+  "documentExpiry": "2031-05-20",
+  "digitalSignatureUrl": "https://identity.utn.ac.cr/signatures/123456789.png"
 }
 ```
 
@@ -801,6 +807,48 @@ Error responses:
 404 User not found / User account is not active / Badge profile was not found
 409 No PIN has been set for this user
 422 Invalid institutional ID, PIN format, or document expiry format
+```
+
+## US-16 Display Digital Signature
+
+The authenticated credential details response includes the holder's enrolled
+visual signature in `digitalSignatureUrl`. The value belongs to the institutional
+identity and remains available when the holder receives a reissued badge.
+
+```http
+POST /users/{institutionalId}/badge-profile/details
+```
+
+```json
+{
+  "pin": "281992"
+}
+```
+
+Relevant response field:
+
+```json
+{
+  "digitalSignatureUrl": "https://identity.utn.ac.cr/signatures/123456789.png"
+}
+```
+
+Existing identities without an enrolled signature return
+`"digitalSignatureUrl": null`. The field is excluded from registration responses
+and the public badge profile. The credential details endpoint continues to use
+PIN authentication and no-store response headers.
+
+This visual signature is distinct from the cryptographic signature used to
+detect credential tampering. `digitalSignatureUrl` is display content and must
+not be treated as proof that a badge or QR payload is authentic.
+
+Signature URLs are validated when the institutional identity is registered:
+
+```text
+HTTPS is required
+embedded username or password values are rejected
+the maximum length is 2,048 characters after trimming
+blank or omitted values are stored as null
 ```
 
 ## Tests
