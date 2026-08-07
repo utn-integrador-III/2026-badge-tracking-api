@@ -450,7 +450,7 @@ def generateAgeProofQr(
         )
 
     database = getDatabase()
-    badge = findLatestBadge(user["id"], {"status": 1})
+    badge = findLatestBadge(user["id"], {"id": 1, "status": 1})
 
     if not badge:
         raise UserBadgeProfileNotFoundError("Badge profile was not found")
@@ -477,6 +477,7 @@ def generateAgeProofQr(
         {
             "token_hash": _hashAgeProofToken(token),
             "user_id": user["id"],
+            "badge_id": badge["id"],
             "minimum_age": request.minimumAge,
             "meets_minimum_age": meetsMinimumAge,
             "role": user["role"],
@@ -505,6 +506,8 @@ def verifyAgeProof(token: str) -> dict:
     ageProof: dict[str, Any] | None = database.age_proof_tokens.find_one(
         {"token_hash": _hashAgeProofToken(token)},
         {
+            "user_id": 1,
+            "badge_id": 1,
             "minimum_age": 1,
             "meets_minimum_age": 1,
             "role": 1,
@@ -521,12 +524,31 @@ def verifyAgeProof(token: str) -> dict:
     if verifiedAtDate >= datetime.fromisoformat(ageProof["expires_at"]):
         raise AgeProofTokenExpiredError("Age proof QR code has expired")
 
+    user = database.users.find_one(
+        {"id": ageProof.get("user_id")},
+        {"is_active": 1},
+    )
+    badge = database.badges.find_one(
+        {
+            "id": ageProof.get("badge_id"),
+            "user_id": ageProof.get("user_id"),
+        },
+        {"status": 1},
+    )
+    badgeStatus = badge["status"] if badge else ageProof["badge_status"]
+    remainsValid = bool(
+        user
+        and user.get("is_active")
+        and badge
+        and badgeStatus in ACTIVE_BADGE_STATUSES
+    )
+
     return {
-        "valid": True,
+        "valid": remainsValid,
         "minimumAge": ageProof["minimum_age"],
         "meetsMinimumAge": ageProof["meets_minimum_age"],
         "role": ageProof["role"],
-        "badgeStatus": ageProof["badge_status"],
+        "badgeStatus": badgeStatus,
         "issuedAt": ageProof["issued_at"],
         "expiresAt": ageProof["expires_at"],
         "verifiedAt": verifiedAtDate.isoformat(),

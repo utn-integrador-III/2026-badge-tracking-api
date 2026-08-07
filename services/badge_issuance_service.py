@@ -4,6 +4,7 @@ from typing import Any
 
 from database.connection import getDatabase
 from models.user import IssueBadgeRequest, UserRole
+from services.admin_service import NotAnAdminError, authenticateAdmin  # re-export
 from services.badge_delivery_service import (
     acknowledgeDelivery,
     listPendingDeliveries,
@@ -19,21 +20,8 @@ from services.user_service import (
 )
 
 
-class NotAnAdminError(Exception):
-    pass
-
-
 class BadgeHolderNotFoundError(Exception):
     pass
-
-
-def _authenticateAdmin(adminInstitutionalId: str, adminPin: str) -> dict[str, Any]:
-    admin = authenticateBadgeHolder(adminInstitutionalId, adminPin)
-
-    if admin["role"] != UserRole.admin.value:
-        raise NotAnAdminError("Only an institutional admin can issue badges")
-
-    return admin
 
 
 def _findBadgeHolder(institutionalId: str) -> dict[str, Any]:
@@ -55,7 +43,11 @@ def issueBadge(request: IssueBadgeRequest) -> dict:
     assertValidInstitutionalId(request.adminInstitutionalId)
     assertValidInstitutionalId(request.institutionalId)
 
-    admin = _authenticateAdmin(request.adminInstitutionalId, request.adminPin)
+    admin = authenticateAdmin(
+        request.adminInstitutionalId,
+        request.adminPin,
+        "Only an institutional admin can issue badges",
+    )
     holder = _findBadgeHolder(request.institutionalId)
 
     database = getDatabase()
@@ -82,11 +74,17 @@ def issueBadge(request: IssueBadgeRequest) -> dict:
     }
     database.badges.insert_one(badgeDocument)
 
+    supersededBadgeId = None
     if previousBadge:
-        database.badges.update_one(
-            {"id": previousBadge["id"]},
+        supersedeResult = database.badges.update_one(
+            {
+                "id": previousBadge["id"],
+                "status": {"$in": ["issued", "active"]},
+            },
             {"$set": {"status": "superseded", "superseded_at": issuedAt}},
         )
+        if supersedeResult.modified_count == 1:
+            supersededBadgeId = previousBadge["id"]
 
     # A device must never install a badge that was replaced before it synced.
     supersedePendingDeliveries(holder["id"])
@@ -104,7 +102,7 @@ def issueBadge(request: IssueBadgeRequest) -> dict:
             "validFrom": issuedAt,
             "validUntil": validUntil,
         },
-        "supersededBadgeId": previousBadge["id"] if previousBadge else None,
+        "supersededBadgeId": supersededBadgeId,
         "delivery": delivery,
     }
 

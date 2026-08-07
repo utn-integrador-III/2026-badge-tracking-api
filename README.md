@@ -498,13 +498,16 @@ overwritten, so the history of what was issued to whom stays auditable.
 
 ```text
 issued      the badge the holder currently carries
+active      legacy value for a current badge
+suspended   temporarily disabled by the institution
 superseded  replaced by a newer badge
-revoked     withdrawn by the institution
+revoked     permanently withdrawn by the institution
 ```
 
-Only `issued` badges verify. A verification QR generated from a badge that was
-later replaced fails with `badge_not_active` and `badgeStatus: "superseded"`,
-because US-07 credentials name the badge they were minted from.
+Only `issued` badges and legacy `active` badges verify. A verification QR
+generated from a badge that was later suspended, revoked or replaced fails with
+`badge_not_active`, because US-07 credentials name the exact badge they were
+minted from.
 
 `GET /users/{institutionalId}/badge-profile` shows the newest badge.
 
@@ -564,80 +567,13 @@ Delivery statuses:
 pending     triggered, waiting for the device to collect it
 delivered   the device confirmed it installed the badge
 superseded  replaced by a newer badge before the device collected it
+cancelled   suspended or revoked before the device collected it
 ```
 
-Registration also triggers a delivery for the badge it issues, so the first
-badge reaches the device through the same path as every later one.
 
-## US-15 Display Extended Identity Info
-
-A badge holder can open the credential detail view to see the complete display
-information for their newest badge. Extended identity data is protected by the
-holder's PIN and is not added to the public badge summary.
-
-### View credential details
-
-```http
-POST /users/{institutionalId}/badge-profile/details
-```
-
-Example:
-
-```http
-POST /users/123456789/badge-profile/details
-```
-
-```json
-{
-  "pin": "281992"
-}
-```
-
-Response:
-
-```json
-{
-  "photoUrl": "https://example.com/profile-photo.png",
-  "fullName": "Kevin Picado",
-  "role": "student",
-  "institutionalId": "123456789",
-  "badgeCode": "BADGE-123456789-47B30953",
-  "roleType": "student",
-  "status": "issued",
-  "validFrom": "2026-08-07T15:10:00.000000+00:00",
-  "validUntil": "2027-08-07T15:10:00.000000+00:00",
-  "issuedAt": "2026-08-07T15:10:00.000000+00:00",
-  "issuingAuthority": "Universidad Técnica Nacional",
-  "nationality": "Costa Rican",
-  "birthplace": "San Jose, Costa Rica",
-  "documentExpiry": "2031-05-20"
-}
-```
-
-`issuedAt` and `issuingAuthority` belong to the badge record. Reissuing a badge
-therefore displays the date and authority captured for the new credential rather
-than values from the badge it replaced. The issuing authority is read from
-`BADGE_TRACKING_ISSUING_AUTHORITY` when each badge is created.
-
-`nationality`, `birthplace`, and `documentExpiry` belong to the institutional
-identity. Existing records without these attributes return `null`. Older badge
-records without an authority use the currently configured authority as a
-compatibility fallback.
-
-The public `GET /users/{institutionalId}/badge-profile` response remains a
-summary and does not include the extended identity attributes. Successful detail
-responses use `Cache-Control: no-store`, `Pragma: no-cache`, and
-`Referrer-Policy: no-referrer` so credential data is not retained by shared
-caches.
 
 Error responses:
 
-```text
-401 Invalid PIN
-404 User not found / User account is not active / Badge profile was not found
-409 No PIN has been set for this user
-422 Invalid institutional ID, PIN format, or document expiry format
-```
 
 ## Tests
 
