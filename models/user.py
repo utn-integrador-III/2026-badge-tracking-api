@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from enum import Enum
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -34,6 +35,11 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
     documentExpiry: str | None = Field(
         default=None,
         description="Physical identity document expiry date in YYYY-MM-DD format.",
+    )
+    digitalSignatureUrl: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="HTTPS URL of the holder's enrolled visual signature.",
     )
 
     @field_validator("fullName", "email", "institutionalId")
@@ -116,6 +122,28 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
 
         return documentExpiry.isoformat()
 
+    @field_validator("digitalSignatureUrl", mode="before")
+    @classmethod
+    def validateDigitalSignatureUrl(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        cleanedValue = value.strip()
+        if not cleanedValue:
+            return None
+
+        if any(character.isspace() for character in cleanedValue):
+            raise ValueError("Digital signature URL must not contain whitespace")
+
+        parsedUrl = urlsplit(cleanedValue)
+        if parsedUrl.scheme.lower() != "https" or not parsedUrl.hostname:
+            raise ValueError("Digital signature URL must use HTTPS")
+
+        if parsedUrl.username is not None or parsedUrl.password is not None:
+            raise ValueError("Digital signature URL must not include credentials")
+
+        return cleanedValue
+
 
 class UserResponse(BaseModel):
     id: int
@@ -163,6 +191,7 @@ class ExtendedBadgeProfileResponse(BadgeProfileResponse):
     nationality: str | None
     birthplace: str | None
     documentExpiry: str | None
+    digitalSignatureUrl: str | None
 
 
 class SetPinRequest(BaseModel):
