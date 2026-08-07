@@ -97,6 +97,7 @@ class TestExtendedBadgeProfile:
             "nationality": "Costa Rican",
             "birthplace": "San Jose, Costa Rica",
             "documentExpiry": "2031-05-20",
+            "digitalSignatureUrl": None,
         }
         assert datetime.fromisoformat(body["issuedAt"]).tzinfo is not None
         assert response.headers["Cache-Control"] == "no-store"
