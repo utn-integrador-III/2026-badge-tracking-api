@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from models.user import (
     AgeProofQrResponse,
@@ -6,6 +6,7 @@ from models.user import (
     BadgeDeliveryResponse,
     BadgeProfileResponse,
     BadgeVerificationQrResponse,
+    ExtendedBadgeProfileResponse,
     GenerateAgeProofQrRequest,
     GenerateBadgeVerificationQrRequest,
     PendingBadgeDeliveriesResponse,
@@ -37,6 +38,7 @@ from services.user_service import (
     UserNotFoundError,
     generateAgeProofQr as generateAgeProofQrService,
     getDigitalBadgeProfile as getDigitalBadgeProfileService,
+    getExtendedBadgeProfile as getExtendedBadgeProfileService,
     registerInstitutionalIdentity as registerInstitutionalIdentityService,
     setUserPin as setUserPinService,
     validateUserPin as validateUserPinService,
@@ -81,7 +83,36 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
-    
+
+
+PROFILE_DETAILS_ERROR_STATUSES = {
+    InvalidInstitutionalIdError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    UserNotFoundError: status.HTTP_404_NOT_FOUND,
+    PinNotSetError: status.HTTP_409_CONFLICT,
+    InvalidPinError: status.HTTP_401_UNAUTHORIZED,
+    UserBadgeProfileNotFoundError: status.HTTP_404_NOT_FOUND,
+}
+
+
+@router.post(
+    "/{institutionalId}/badge-profile/details",
+    response_model=ExtendedBadgeProfileResponse,
+    status_code=status.HTTP_200_OK,
+)
+def getExtendedBadgeProfile(
+    institutionalId: str,
+    request: ValidatePinRequest,
+    response: Response,
+) -> dict:
+    with serviceErrorsAsHttp(PROFILE_DETAILS_ERROR_STATUSES):
+        details = getExtendedBadgeProfileService(institutionalId, request.pin)
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return details
+
+
 @router.post(
     "/{institutionalId}/pin",
     response_model=SetPinResponse,

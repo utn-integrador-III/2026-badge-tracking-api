@@ -29,6 +29,12 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
         default=None,
         description="Date of birth in YYYY-MM-DD format. Required to share age proof.",
     )
+    nationality: str | None = Field(default=None, min_length=2, max_length=100)
+    birthplace: str | None = Field(default=None, min_length=2, max_length=150)
+    documentExpiry: str | None = Field(
+        default=None,
+        description="Physical identity document expiry date in YYYY-MM-DD format.",
+    )
 
     @field_validator("fullName", "email", "institutionalId")
     @classmethod
@@ -58,6 +64,15 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
         cleanedValue = value.strip()
         return cleanedValue or None
 
+    @field_validator("nationality", "birthplace", mode="before")
+    @classmethod
+    def trimExtendedIdentityText(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        cleanedValue = value.strip()
+        return cleanedValue or None
+
     @field_validator("birthDate")
     @classmethod
     def validateBirthDate(cls, value: str | None) -> str | None:
@@ -81,6 +96,25 @@ class RegisterInstitutionalIdentityRequest(BaseModel):
             raise ValueError("Birth date is not realistic")
 
         return birthDate.isoformat()
+
+    @field_validator("documentExpiry")
+    @classmethod
+    def validateDocumentExpiry(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleanedValue = value.strip()
+        if not cleanedValue:
+            return None
+
+        try:
+            documentExpiry = date.fromisoformat(cleanedValue)
+        except ValueError as error:
+            raise ValueError(
+                "Document expiry must use the YYYY-MM-DD format"
+            ) from error
+
+        return documentExpiry.isoformat()
 
 
 class UserResponse(BaseModel):
@@ -121,6 +155,15 @@ class BadgeProfileResponse(BaseModel):
     status: str
     validFrom: str
     validUntil: str
+
+
+class ExtendedBadgeProfileResponse(BadgeProfileResponse):
+    issuedAt: str
+    issuingAuthority: str
+    nationality: str | None
+    birthplace: str | None
+    documentExpiry: str | None
+
 
 class SetPinRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
