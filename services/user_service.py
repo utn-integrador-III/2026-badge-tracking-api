@@ -22,6 +22,7 @@ from utils.qr_code import buildQrCodeDataUri
 
 
 DEFAULT_VERIFICATION_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_ISSUING_AUTHORITY = "Universidad Técnica Nacional"
 ACTIVE_BADGE_STATUSES = frozenset({"issued", "active"})
 
 
@@ -125,6 +126,14 @@ def assertValidInstitutionalId(institutionalId: str) -> None:
         )
 
 
+def getIssuingAuthority() -> str:
+    configuredAuthority = os.getenv(
+        "BADGE_TRACKING_ISSUING_AUTHORITY",
+        DEFAULT_ISSUING_AUTHORITY,
+    ).strip()
+    return configuredAuthority or DEFAULT_ISSUING_AUTHORITY
+
+
 def registerInstitutionalIdentity(
     request: RegisterInstitutionalIdentityRequest,
 ) -> dict:
@@ -135,6 +144,7 @@ def registerInstitutionalIdentity(
         createdAtDate + timedelta(days=DEFAULT_BADGE_VALIDITY_IN_DAYS)
     ).isoformat()
     badgeCode = f"BADGE-{request.institutionalId.upper()}-{uuid.uuid4().hex[:8].upper()}"
+    issuingAuthority = getIssuingAuthority()
 
     existingUser = database.users.find_one(
         {
@@ -161,6 +171,9 @@ def registerInstitutionalIdentity(
         "institutional_id": request.institutionalId,
         "photo_url": request.photoUrl,
         "birth_date": request.birthDate,
+        "nationality": request.nationality,
+        "birthplace": request.birthplace,
+        "document_expiry": request.documentExpiry,
         "is_active": True,
         "created_at": createdAt,
         "pin_hash": None,
@@ -175,6 +188,7 @@ def registerInstitutionalIdentity(
         "issued_at": createdAt,
         "valid_from": createdAt,
         "valid_until": validUntil,
+        "issuing_authority": issuingAuthority,
     }
 
     try:
@@ -261,6 +275,49 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
+    }
+
+
+def getExtendedBadgeProfile(institutionalId: str, pin: str) -> dict:
+    assertValidInstitutionalId(institutionalId)
+    user = authenticateBadgeHolder(institutionalId, pin)
+
+    badge = findLatestBadge(
+        user["id"],
+        {
+            "badge_code": 1,
+            "role_type": 1,
+            "status": 1,
+            "issued_at": 1,
+            "valid_from": 1,
+            "valid_until": 1,
+            "issuing_authority": 1,
+        },
+    )
+    if not badge:
+        raise UserBadgeProfileNotFoundError("Badge profile was not found")
+
+    issuedAt = badge["issued_at"]
+    validFrom = badge.get("valid_from") or issuedAt
+    validUntil = badge.get("valid_until") or calculateDefaultValidUntil(validFrom)
+
+    return {
+        "photoUrl": user.get("photo_url"),
+        "fullName": user["full_name"],
+        "role": user["role"],
+        "institutionalId": user["institutional_id"],
+        "badgeCode": badge["badge_code"],
+        "roleType": badge.get("role_type") or user["role"],
+        "status": badge["status"],
+        "validFrom": validFrom,
+        "validUntil": validUntil,
+        "issuedAt": issuedAt,
+        "issuingAuthority": (
+            badge.get("issuing_authority") or getIssuingAuthority()
+        ),
+        "nationality": user.get("nationality"),
+        "birthplace": user.get("birthplace"),
+        "documentExpiry": user.get("document_expiry"),
     }
 
 
@@ -354,6 +411,9 @@ def authenticateBadgeHolder(institutionalId: str, pin: str) -> dict[str, Any]:
             "institutional_id": 1,
             "photo_url": 1,
             "birth_date": 1,
+            "nationality": 1,
+            "birthplace": 1,
+            "document_expiry": 1,
             "pin_hash": 1,
             "is_active": 1,
         },
