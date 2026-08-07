@@ -174,6 +174,7 @@ def registerInstitutionalIdentity(
         "nationality": request.nationality,
         "birthplace": request.birthplace,
         "document_expiry": request.documentExpiry,
+        "digital_signature_url": request.digitalSignatureUrl,
         "is_active": True,
         "created_at": createdAt,
         "pin_hash": None,
@@ -318,6 +319,7 @@ def getExtendedBadgeProfile(institutionalId: str, pin: str) -> dict:
         "nationality": user.get("nationality"),
         "birthplace": user.get("birthplace"),
         "documentExpiry": user.get("document_expiry"),
+        "digitalSignatureUrl": user.get("digital_signature_url"),
     }
 
 
@@ -414,6 +416,7 @@ def authenticateBadgeHolder(institutionalId: str, pin: str) -> dict[str, Any]:
             "nationality": 1,
             "birthplace": 1,
             "document_expiry": 1,
+            "digital_signature_url": 1,
             "pin_hash": 1,
             "is_active": 1,
         },
