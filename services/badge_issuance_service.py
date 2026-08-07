@@ -16,6 +16,7 @@ from services.user_service import (
     authenticateBadgeHolder,
     findCurrentBadge,
     getNextSequence,
+    getIssuingAuthority,
 )
 
 
@@ -69,6 +70,7 @@ def issueBadge(request: IssueBadgeRequest) -> dict:
         "valid_from": issuedAt,
         "valid_until": validUntil,
         "issued_by_user_id": admin["id"],
+        "issuing_authority": getIssuingAuthority(),
     }
     database.badges.insert_one(badgeDocument)
 
