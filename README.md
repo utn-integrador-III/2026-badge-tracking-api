@@ -22,6 +22,7 @@ BADGE_TRACKING_MONGODB_URI=mongodb://localhost:27017
 BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 BADGE_TRACKING_VERIFICATION_BASE_URL=http://127.0.0.1:8000
 BADGE_TRACKING_SIGNING_KEY=change-me-in-every-deployed-environment
+BADGE_TRACKING_ISSUING_AUTHORITY=Universidad Técnica Nacional
 ```
 
 `BADGE_TRACKING_VERIFICATION_BASE_URL` is the public base URL encoded into the
@@ -32,6 +33,10 @@ falls back to a well-known development value, so **it must be set to a private
 random value in every deployed environment**. Anyone holding this key can mint
 badges that pass verification. Rotating it invalidates QR codes already issued,
 which is harmless because they expire within minutes anyway.
+
+`BADGE_TRACKING_ISSUING_AUTHORITY` is stored with every badge when it is issued.
+It defaults to `Universidad Técnica Nacional`. Changing the setting affects new
+badges without rewriting the authority recorded on existing credentials.
 
 ## Run API
 
@@ -62,7 +67,10 @@ Example body:
   "role": "student",
   "institutionalId": "123456789",
   "photoUrl": "https://example.com/profile-photo.png",
-  "birthDate": "1992-08-28"
+  "birthDate": "1992-08-28",
+  "nationality": "Costa Rican",
+  "birthplace": "San Jose, Costa Rica",
+  "documentExpiry": "2031-05-20"
 }
 ```
 
@@ -79,6 +87,11 @@ Only an `admin` can issue badges to other users (see US-10).
 
 `birthDate` is optional and uses the `YYYY-MM-DD` format. It is never returned by
 any endpoint; it is only used to answer age proof checks (see US-05).
+
+`nationality`, `birthplace`, and `documentExpiry` are optional for compatibility
+with existing identities. `documentExpiry` is the expiry date of the holder's
+physical identity document and uses `YYYY-MM-DD`; it is separate from the badge
+validity period.
 
 ## US-02 Authenticate via PIN
 
@@ -555,6 +568,76 @@ superseded  replaced by a newer badge before the device collected it
 
 Registration also triggers a delivery for the badge it issues, so the first
 badge reaches the device through the same path as every later one.
+
+## US-15 Display Extended Identity Info
+
+A badge holder can open the credential detail view to see the complete display
+information for their newest badge. Extended identity data is protected by the
+holder's PIN and is not added to the public badge summary.
+
+### View credential details
+
+```http
+POST /users/{institutionalId}/badge-profile/details
+```
+
+Example:
+
+```http
+POST /users/123456789/badge-profile/details
+```
+
+```json
+{
+  "pin": "281992"
+}
+```
+
+Response:
+
+```json
+{
+  "photoUrl": "https://example.com/profile-photo.png",
+  "fullName": "Kevin Picado",
+  "role": "student",
+  "institutionalId": "123456789",
+  "badgeCode": "BADGE-123456789-47B30953",
+  "roleType": "student",
+  "status": "issued",
+  "validFrom": "2026-08-07T15:10:00.000000+00:00",
+  "validUntil": "2027-08-07T15:10:00.000000+00:00",
+  "issuedAt": "2026-08-07T15:10:00.000000+00:00",
+  "issuingAuthority": "Universidad Técnica Nacional",
+  "nationality": "Costa Rican",
+  "birthplace": "San Jose, Costa Rica",
+  "documentExpiry": "2031-05-20"
+}
+```
+
+`issuedAt` and `issuingAuthority` belong to the badge record. Reissuing a badge
+therefore displays the date and authority captured for the new credential rather
+than values from the badge it replaced. The issuing authority is read from
+`BADGE_TRACKING_ISSUING_AUTHORITY` when each badge is created.
+
+`nationality`, `birthplace`, and `documentExpiry` belong to the institutional
+identity. Existing records without these attributes return `null`. Older badge
+records without an authority use the currently configured authority as a
+compatibility fallback.
+
+The public `GET /users/{institutionalId}/badge-profile` response remains a
+summary and does not include the extended identity attributes. Successful detail
+responses use `Cache-Control: no-store`, `Pragma: no-cache`, and
+`Referrer-Policy: no-referrer` so credential data is not retained by shared
+caches.
+
+Error responses:
+
+```text
+401 Invalid PIN
+404 User not found / User account is not active / Badge profile was not found
+409 No PIN has been set for this user
+422 Invalid institutional ID, PIN format, or document expiry format
+```
 
 ## Tests
 
