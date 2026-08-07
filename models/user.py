@@ -336,6 +336,12 @@ class BadgeDeliveryStatus(str, Enum):
     pending = "pending"
     delivered = "delivered"
     superseded = "superseded"
+    cancelled = "cancelled"
+
+
+class BadgeLifecycleStatus(str, Enum):
+    suspended = "suspended"
+    revoked = "revoked"
 
 
 class IssueBadgeRequest(BaseModel):
@@ -375,6 +381,98 @@ class IssueBadgeRequest(BaseModel):
         if not value.isdigit():
             raise ValueError("PIN must contain digits only")
         return value
+
+
+class AdminBadgeSearchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    adminInstitutionalId: str = Field(
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d{9}$",
+        description="Institutional ID of the admin performing the search",
+    )
+    adminPin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="PIN of the admin performing the search",
+    )
+    query: str = Field(
+        min_length=2,
+        max_length=150,
+        description="Institutional ID, full name, or email to search for",
+    )
+    limit: int = Field(default=20, ge=1, le=50)
+
+    @field_validator("adminPin")
+    @classmethod
+    def validateAdminPinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def trimQuery(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class UpdateBadgeStatusRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    adminInstitutionalId: str = Field(
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d{9}$",
+        description="Institutional ID of the admin changing the badge status",
+    )
+    adminPin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="PIN of the admin changing the badge status",
+    )
+    status: BadgeLifecycleStatus
+    reason: str = Field(
+        min_length=3,
+        max_length=250,
+        description="Reason for suspending or revoking the badge",
+    )
+
+    @field_validator("adminPin")
+    @classmethod
+    def validateAdminPinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def trimReason(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class AdminBadgeSearchResult(BaseModel):
+    userId: int
+    fullName: str
+    email: str
+    institutionalId: str
+    role: UserRole
+    isActive: bool
+    badge: BadgeResponse | None
+
+
+class AdminBadgeSearchResponse(BaseModel):
+    count: int
+    results: list[AdminBadgeSearchResult]
+
+
+class UpdateBadgeStatusResponse(BaseModel):
+    message: str
+    badge: BadgeResponse
+    previousStatus: str
+    changed: bool
+    changedAt: str
+    reason: str
 
 
 class BadgeDeliveryResponse(BaseModel):
