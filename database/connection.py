@@ -90,6 +90,37 @@ def initializeDatabase() -> None:
         [("badge_id", ASCENDING), ("status", ASCENDING)],
         name="badge_delivery_badge_status",
     )
+    database.badge_notifications.create_index(
+        [("notification_id", ASCENDING)],
+        unique=True,
+        name="unique_badge_notification_id",
+    )
+    # A badge is warned about once, so a notice the holder dealt with cannot be
+    # queued again on the next scan.
+    database.badge_notifications.create_index(
+        [("badge_id", ASCENDING), ("type", ASCENDING)],
+        unique=True,
+        name="unique_badge_notification_per_badge",
+    )
+    database.badge_notifications.create_index(
+        [("user_id", ASCENDING), ("status", ASCENDING)],
+        name="badge_notification_user_status",
+    )
+    database.badge_renewal_requests.create_index(
+        [("request_id", ASCENDING)],
+        unique=True,
+        name="unique_badge_renewal_request_id",
+    )
+    # Only one renewal request of a badge can be open at a time.
+    database.badge_renewal_requests.create_index(
+        [("badge_id", ASCENDING), ("status", ASCENDING)],
+        unique=True,
+        name="unique_badge_renewal_request_per_badge_status",
+    )
+    database.badge_renewal_requests.create_index(
+        [("user_id", ASCENDING), ("status", ASCENDING)],
+        name="badge_renewal_request_user_status",
+    )
 
 
 def closeDatabase() -> None:

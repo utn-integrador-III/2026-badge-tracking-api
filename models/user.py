@@ -416,6 +416,23 @@ class BadgeLifecycleStatus(str, Enum):
     revoked = "revoked"
 
 
+class BadgeNotificationType(str, Enum):
+    badgeExpiring = "badge_expiring"
+
+
+class BadgeNotificationStatus(str, Enum):
+    pending = "pending"
+    delivered = "delivered"
+    dismissed = "dismissed"
+    resolved = "resolved"
+
+
+class BadgeRenewalRequestStatus(str, Enum):
+    requested = "requested"
+    fulfilled = "fulfilled"
+    cancelled = "cancelled"
+
+
 class IssueBadgeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -586,3 +603,37 @@ class BadgeDeliveryPinRequest(BaseModel):
         if not value.isdigit():
             raise ValueError("PIN must contain digits only")
         return value
+
+
+class BadgeNotificationResponse(BaseModel):
+    notificationId: str
+    type: BadgeNotificationType
+    status: BadgeNotificationStatus
+    badgeId: int
+    badgeCode: str
+    title: str
+    body: str
+    actionLabel: str
+    actionUrl: str
+    daysUntilExpiry: int
+    expired: bool
+    validUntil: str
+    createdAt: str
+    deliveredAt: str | None
+
+
+class PendingBadgeNotificationsResponse(BaseModel):
+    institutionalId: str
+    notifications: list[BadgeNotificationResponse]
+
+
+class BadgeRenewalRequestResponse(BaseModel):
+    requestId: str
+    badgeId: int
+    badgeCode: str
+    status: BadgeRenewalRequestStatus
+    validUntil: str
+    daysUntilExpiry: int
+    requestedAt: str
+    fulfilledAt: str | None
+    fulfilledBadgeId: int | None
