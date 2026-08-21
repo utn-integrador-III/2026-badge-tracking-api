@@ -851,6 +851,152 @@ the maximum length is 2,048 characters after trimming
 blank or omitted values are stored as null
 ```
 
+## US-14 Expiry and Renewal Notifications
+
+Thirty days before a badge expires, its holder gets a notification carrying a
+renewal call to action. The notice is queued once per badge and waits in the
+holder's device queue until it is collected, acted on, or the badge changes.
+
+### Queue the notices (scheduled job)
+
+```bash
+python -m jobs.expiry_notifications
+```
+
+The job walks every active badge that entered the expiry window and queues the
+notice for its holder, so a holder is warned even when their device has not
+opened the app for weeks. Running it twice never warns anybody twice. Schedule
+it once a day.
+
+Fetching notifications also evaluates the caller's own badge, so a device that
+syncs between two job runs still sees the notice on time.
+
+### Collect the notifications (badge holder, PIN required)
+
+```http
+POST /users/{institutionalId}/badge-notifications/fetch
+```
+
+```json
+{ "pin": "281992" }
+```
+
+Response:
+
+```json
+{
+  "institutionalId": "123456789",
+  "notifications": [
+    {
+      "notificationId": "8f0b1d4c9a1c4f0e9a4c2b7d5e6f1a30",
+      "type": "badge_expiring",
+      "status": "pending",
+      "badgeId": 3,
+      "badgeCode": "BADGE-123456789-47B30953",
+      "title": "Your badge expires in 30 days",
+      "body": "Badge BADGE-123456789-47B30953 expires in 30 days on 2027-01-28. Request a renewal to keep using your digital badge.",
+      "actionLabel": "Renew badge",
+      "actionUrl": "http://127.0.0.1:8000/users/123456789/badge-renewals",
+      "daysUntilExpiry": 30,
+      "expired": false,
+      "validUntil": "2027-01-28T13:03:27.300024+00:00",
+      "createdAt": "2026-12-29T13:03:27.300024+00:00",
+      "deliveredAt": null
+    }
+  ]
+}
+```
+
+`daysUntilExpiry`, `title` and `body` are built when the device syncs, never
+when the notice was queued, so a notification that waited in the queue still
+shows an accurate countdown. Once the expiry date passes, the same notification
+reports `"expired": true` and asks for a renewal instead of counting down.
+
+Confirm the push reached the device:
+
+```http
+POST /users/{institutionalId}/badge-notifications/{notificationId}/acknowledge
+```
+
+Clear it from the holder's device:
+
+```http
+POST /users/{institutionalId}/badge-notifications/{notificationId}/dismiss
+```
+
+Both take `{ "pin": "281992" }`. Acknowledging moves the notice to `delivered`
+with a `deliveredAt` timestamp and stops it appearing in fetches; repeating
+either call is safe and keeps the original timestamps.
+
+Notification statuses:
+
+```text
+pending     queued, waiting for the device to collect it
+delivered   the device confirmed it showed the notification
+dismissed   the holder cleared it or acted on the renewal CTA
+resolved    the badge was renewed, suspended or revoked
+```
+
+### Renew the badge (the call to action)
+
+`actionUrl` points at the renewal endpoint the CTA calls:
+
+```http
+POST /users/{institutionalId}/badge-renewals
+```
+
+```json
+{ "pin": "281992" }
+```
+
+Response:
+
+```json
+{
+  "requestId": "b74e2c1f88f6446da5d5ec3ff6a01c2b",
+  "badgeId": 3,
+  "badgeCode": "BADGE-123456789-47B30953",
+  "status": "requested",
+  "validUntil": "2027-01-28T13:03:27.300024+00:00",
+  "daysUntilExpiry": 30,
+  "requestedAt": "2026-12-29T13:05:11.482233+00:00",
+  "fulfilledAt": null,
+  "fulfilledBadgeId": null
+}
+```
+
+Requesting a renewal dismisses the notification that asked for it, so the
+holder stops being nagged while the request is open. Tapping the CTA twice
+returns the same open request rather than creating a second one. A holder
+whose badge is already suspended or revoked has nothing to renew and gets
+`409`.
+
+The request is fulfilled by the existing issuance endpoint: when an admin
+issues a new badge for that holder (`POST /badges`, US-10), the open request
+moves to `fulfilled` with the new badge in `fulfilledBadgeId`, and the notice
+for the replaced badge is resolved. Suspending or revoking a badge cancels its
+open renewal request and resolves its notice, alongside the delivery
+cancellation described in US-11.
+
+Renewal request statuses:
+
+```text
+requested   the holder asked for a renewal
+fulfilled   an admin issued the replacement badge
+cancelled   the badge was suspended or revoked before renewal
+```
+
+### Configuration
+
+```text
+BADGE_TRACKING_EXPIRY_NOTICE_DAYS       days of warning before expiry, default 30
+BADGE_TRACKING_VERIFICATION_BASE_URL    base URL the renewal actionUrl points at
+```
+
+Values outside 1-365, or values that are not whole numbers, fall back to 30
+days. Badges predating the validity fields fall back to the same 365-day
+default used elsewhere, so legacy holders are warned too.
+
 ## Tests
 
 ```bash
