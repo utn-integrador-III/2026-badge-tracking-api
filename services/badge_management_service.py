@@ -9,6 +9,7 @@ from database.connection import getDatabase
 from models.user import AdminBadgeSearchRequest, UpdateBadgeStatusRequest
 from services.admin_service import authenticateAdmin
 from services.badge_delivery_service import cancelPendingBadgeDeliveries
+from services.badge_notification_service import cancelBadgeNotifications
 from services.user_service import calculateDefaultValidUntil, findLatestBadge
 
 
@@ -125,10 +126,9 @@ def _buildStatusResponse(
 
 
 def _returnIdempotentStatus(badge: dict[str, Any]) -> dict:
-    cancelPendingBadgeDeliveries(
-        badge["id"],
-        badge.get("status_change_reason") or "Badge is no longer active",
-    )
+    reason = badge.get("status_change_reason") or "Badge is no longer active"
+    cancelPendingBadgeDeliveries(badge["id"], reason)
+    cancelBadgeNotifications(badge["id"], reason)
     return _buildStatusResponse(badge, badge["status"], changed=False)
 
 
@@ -186,6 +186,7 @@ def updateBadgeStatus(badgeId: int, request: UpdateBadgeStatusRequest) -> dict:
         )
         if updatedBadge:
             cancelPendingBadgeDeliveries(badgeId, request.reason)
+            cancelBadgeNotifications(badgeId, request.reason)
             return _buildStatusResponse(
                 updatedBadge,
                 previousStatus,

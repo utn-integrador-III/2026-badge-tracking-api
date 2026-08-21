@@ -4,12 +4,15 @@ from models.user import (
     AgeProofQrResponse,
     BadgeDeliveryPinRequest,
     BadgeDeliveryResponse,
+    BadgeNotificationResponse,
     BadgeProfileResponse,
+    BadgeRenewalRequestResponse,
     BadgeVerificationQrResponse,
     ExtendedBadgeProfileResponse,
     GenerateAgeProofQrRequest,
     GenerateBadgeVerificationQrRequest,
     PendingBadgeDeliveriesResponse,
+    PendingBadgeNotificationsResponse,
     RegisterInstitutionalIdentityRequest,
     RegisterInstitutionalIdentityResponse,
     SetPinRequest,
@@ -21,6 +24,14 @@ from services.badge_delivery_service import BadgeDeliveryNotFoundError
 from services.badge_issuance_service import (
     acknowledgeBadgeDelivery as acknowledgeBadgeDeliveryService,
     fetchPendingBadgeDeliveries as fetchPendingBadgeDeliveriesService,
+)
+from services.badge_notification_service import (
+    BadgeNotificationNotFoundError,
+    NoRenewableBadgeError,
+    acknowledgeNotification as acknowledgeNotificationService,
+    dismissNotification as dismissNotificationService,
+    fetchPendingNotifications as fetchPendingNotificationsService,
+    requestBadgeRenewal as requestBadgeRenewalService,
 )
 from services.badge_verification_service import (
     generateBadgeVerificationQr as generateBadgeVerificationQrService,
@@ -197,6 +208,16 @@ BADGE_DELIVERY_ERROR_STATUSES = {
 }
 
 
+BADGE_NOTIFICATION_ERROR_STATUSES = {
+    InvalidInstitutionalIdError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    UserNotFoundError: status.HTTP_404_NOT_FOUND,
+    PinNotSetError: status.HTTP_409_CONFLICT,
+    InvalidPinError: status.HTTP_401_UNAUTHORIZED,
+    BadgeNotificationNotFoundError: status.HTTP_404_NOT_FOUND,
+    NoRenewableBadgeError: status.HTTP_409_CONFLICT,
+}
+
+
 @router.post(
     "/{institutionalId}/age-proof-qr",
     response_model=AgeProofQrResponse,
@@ -252,3 +273,65 @@ def acknowledgeBadgeDelivery(
             deliveryId,
             request.pin,
         )
+
+
+@router.post(
+    "/{institutionalId}/badge-notifications/fetch",
+    response_model=PendingBadgeNotificationsResponse,
+    status_code=status.HTTP_200_OK,
+)
+def fetchPendingBadgeNotifications(
+    institutionalId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_NOTIFICATION_ERROR_STATUSES):
+        return fetchPendingNotificationsService(institutionalId, request.pin)
+
+
+@router.post(
+    "/{institutionalId}/badge-notifications/{notificationId}/acknowledge",
+    response_model=BadgeNotificationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def acknowledgeBadgeNotification(
+    institutionalId: str,
+    notificationId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_NOTIFICATION_ERROR_STATUSES):
+        return acknowledgeNotificationService(
+            institutionalId,
+            request.pin,
+            notificationId,
+        )
+
+
+@router.post(
+    "/{institutionalId}/badge-notifications/{notificationId}/dismiss",
+    response_model=BadgeNotificationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def dismissBadgeNotification(
+    institutionalId: str,
+    notificationId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_NOTIFICATION_ERROR_STATUSES):
+        return dismissNotificationService(
+            institutionalId,
+            request.pin,
+            notificationId,
+        )
+
+
+@router.post(
+    "/{institutionalId}/badge-renewals",
+    response_model=BadgeRenewalRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def requestBadgeRenewal(
+    institutionalId: str,
+    request: BadgeDeliveryPinRequest,
+) -> dict:
+    with serviceErrorsAsHttp(BADGE_NOTIFICATION_ERROR_STATUSES):
+        return requestBadgeRenewalService(institutionalId, request.pin)
