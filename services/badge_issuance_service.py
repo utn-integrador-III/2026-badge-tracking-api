@@ -11,6 +11,7 @@ from services.badge_delivery_service import (
     supersedePendingDeliveries,
     triggerBadgeDelivery,
 )
+from services.badge_notification_service import completeRenewal
 from services.user_service import (
     assertValidInstitutionalId,
     authenticateBadgeHolder,
@@ -89,6 +90,9 @@ def issueBadge(request: IssueBadgeRequest) -> dict:
     # A device must never install a badge that was replaced before it synced.
     supersedePendingDeliveries(holder["id"])
     delivery = triggerBadgeDelivery(holder["id"], badgeDocument)
+
+    # The new badge is the renewal the holder was warned to ask for.
+    completeRenewal(holder["id"], badgeDocument)
 
     return {
         "message": "Badge issued successfully",
