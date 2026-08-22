@@ -4,6 +4,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from utils.branding import normalizeHexColor
+
 
 MAX_REALISTIC_AGE_IN_YEARS = 120
 
@@ -173,6 +175,19 @@ class RegisterInstitutionalIdentityResponse(BaseModel):
     badge: BadgeResponse
 
 
+class InstitutionBrandingResponse(BaseModel):
+    institution: str
+    primaryColor: str
+    secondaryColor: str
+    contrastTextColor: str
+    logoUrl: str | None
+    logoContentType: str | None
+    logoSizeInBytes: int | None
+    logoUpdatedAt: str | None
+    isCustomized: bool
+    updatedAt: str | None
+
+
 class BadgeProfileResponse(BaseModel):
     photoUrl: str | None
     fullName: str
@@ -183,6 +198,7 @@ class BadgeProfileResponse(BaseModel):
     status: str
     validFrom: str
     validUntil: str
+    branding: InstitutionBrandingResponse
 
 
 class ExtendedBadgeProfileResponse(BadgeProfileResponse):
@@ -637,3 +653,43 @@ class BadgeRenewalRequestResponse(BaseModel):
     requestedAt: str
     fulfilledAt: str | None
     fulfilledBadgeId: int | None
+
+
+class UpdateInstitutionBrandingRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    adminInstitutionalId: str = Field(
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d{9}$",
+        description="Institutional ID of the admin setting the brand",
+    )
+    adminPin: str = Field(
+        min_length=6,
+        max_length=6,
+        description="PIN of the admin setting the brand",
+    )
+    primaryColor: str = Field(
+        min_length=4,
+        max_length=7,
+        description="Main accent colour as a hex value, such as #1F3B73",
+    )
+    secondaryColor: str = Field(
+        min_length=4,
+        max_length=7,
+        description="Supporting accent colour as a hex value",
+    )
+
+    @field_validator("adminPin")
+    @classmethod
+    def validateAdminPinFormat(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("PIN must contain digits only")
+        return value
+
+    @field_validator("primaryColor", "secondaryColor", mode="before")
+    @classmethod
+    def normalizeAccentColor(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return normalizeHexColor(value)

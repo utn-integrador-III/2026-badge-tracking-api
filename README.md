@@ -192,9 +192,20 @@ Response:
   "badgeCode": "BADGE-123456789-ABC12345",
   "status": "issued",
   "validFrom": "2026-06-20T16:20:27.493776+00:00",
-  "validUntil": "2027-06-20T16:20:27.493776+00:00"
+  "validUntil": "2027-06-20T16:20:27.493776+00:00",
+  "branding": {
+    "institution": "Universidad Técnica Nacional",
+    "primaryColor": "#1F3B73",
+    "secondaryColor": "#C8A227",
+    "contrastTextColor": "#FFFFFF",
+    "logoUrl": null,
+    "isCustomized": false
+  }
 }
 ```
+
+The `branding` block carries the institution's logo and accent colours, so the
+badge renders in the institutional brand. See [Custom Badge Branding](#custom-badge-branding).
 
 ## US-05 Share Age Proof via Time-Limited QR
 
@@ -996,6 +1007,126 @@ BADGE_TRACKING_VERIFICATION_BASE_URL    base URL the renewal actionUrl points at
 Values outside 1-365, or values that are not whole numbers, fall back to 30
 days. Badges predating the validity fields fall back to the same 365-day
 default used elsewhere, so legacy holders are warned too.
+
+## Custom Badge Branding
+
+An institution admin uploads a logo and picks the accent colours their badges
+are rendered with. Branding is stored per institution and every badge view
+carries the brand of the institution that issued that badge.
+
+### Set the brand (admin, multipart upload)
+
+```http
+PUT /institutions/branding
+```
+
+Sent as `multipart/form-data`:
+
+```text
+adminInstitutionalId   900000001
+adminPin               481726
+primaryColor           #0b5fff
+secondaryColor         #ffd166
+logo                   the image file (optional)
+```
+
+```bash
+curl -X PUT http://127.0.0.1:8000/institutions/branding   -F adminInstitutionalId=900000001   -F adminPin=481726   -F primaryColor=#0b5fff   -F secondaryColor=#ffd166   -F logo=@logo.png
+```
+
+Response:
+
+```json
+{
+  "institution": "Universidad Técnica Nacional",
+  "primaryColor": "#0B5FFF",
+  "secondaryColor": "#FFD166",
+  "contrastTextColor": "#FFFFFF",
+  "logoUrl": "http://127.0.0.1:8000/institutions/branding/logos/4f8b1c2d9e7a4b6c8d0e2f4a6b8c0d1e",
+  "logoContentType": "image/png",
+  "logoSizeInBytes": 20418,
+  "logoUpdatedAt": "2026-08-21T13:03:27.300024+00:00",
+  "isCustomized": true,
+  "updatedAt": "2026-08-21T13:03:27.300024+00:00"
+}
+```
+
+The admin brands the institution that issued their own badge, so an admin can
+never restyle somebody else's institution. The same authorization rule as US-11
+applies: a suspended or revoked admin badge loses management access.
+
+Colours accept `#RRGGBB` or the `#RGB` shorthand, in any case and with
+surrounding spaces, and are stored normalized as uppercase `#RRGGBB`.
+`contrastTextColor` is derived from the primary colour, not stored: it returns
+the black or white that stays legible on that accent, so clients do not have to
+guess.
+
+Omitting the `logo` part adjusts the colours and keeps the logo already on
+file. Uploading a new logo retires the previous one, and the old logo URL stops
+resolving.
+
+### Read the brand
+
+```http
+GET /institutions/branding
+```
+
+Returns the brand of the institution this deployment issues under. Until an
+admin sets one, every field comes back on the default palette with
+`"isCustomized": false`, so a badge always has something to render.
+
+### Serve the logo
+
+```http
+GET /institutions/branding/logos/{logoAssetId}
+```
+
+Returns the image bytes with their detected content type. Every upload gets a
+new asset id, so the response is served `immutable` and a replaced logo is
+never shown from a cache. The logo is served with `nosniff`, a
+`default-src 'none'; sandbox` content security policy, and an inline
+disposition.
+
+### Branded badges
+
+`GET /users/{institutionalId}/badge-profile` and the credential details of
+US-15 both carry a `branding` block:
+
+```json
+{
+  "badgeCode": "BADGE-123456789-47B30953",
+  "status": "issued",
+  "branding": {
+    "institution": "Universidad Técnica Nacional",
+    "primaryColor": "#0B5FFF",
+    "secondaryColor": "#FFD166",
+    "contrastTextColor": "#FFFFFF",
+    "logoUrl": "http://127.0.0.1:8000/institutions/branding/logos/4f8b1c2d9e7a4b6c8d0e2f4a6b8c0d1e",
+    "isCustomized": true
+  }
+}
+```
+
+A badge keeps the authority it was issued under, so branding follows the badge:
+a holder whose badge was granted by another institution keeps that
+institution's brand, and a reissued badge keeps the brand of the institution
+that granted it.
+
+### Logo rules
+
+```text
+accepted formats   PNG, JPEG, WEBP
+maximum size       524,288 bytes (512 KB)
+format detection   read from the file's own bytes, not the declared type
+```
+
+SVG is deliberately rejected. An SVG can carry script and the logo is served
+back from the API origin, so accepting one would hand every badge viewer a
+stored cross-site scripting vector.
+
+A rejected upload leaves the existing brand untouched: `413` when the file is
+too large, `415` when the format is not supported, and `422` when the file is
+empty or a colour is not a hex value.
 
 ## Tests
 
