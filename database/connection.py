@@ -90,6 +90,15 @@ def initializeDatabase() -> None:
         [("badge_id", ASCENDING), ("status", ASCENDING)],
         name="badge_delivery_badge_status",
     )
+    database.institution_branding.create_index(
+        [("institution", ASCENDING)],
+        unique=True,
+        name="unique_institution_branding",
+    )
+    database.institution_branding.create_index(
+        [("logo_asset_id", ASCENDING)],
+        name="institution_branding_logo_asset",
+    )
     database.badge_notifications.create_index(
         [("notification_id", ASCENDING)],
         unique=True,

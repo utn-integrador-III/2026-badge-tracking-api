@@ -1,5 +1,4 @@
 import hashlib
-import os
 import re
 import secrets
 import uuid
@@ -18,11 +17,17 @@ from models.user import (
     SetPinRequest,
 )
 from services.badge_delivery_service import triggerBadgeDelivery
+from services.institution_branding_service import resolveBadgeBranding
 from utils.qr_code import buildQrCodeDataUri
+# Re-exported so callers keep importing the deployment settings from here.
+from utils.settings import (
+    DEFAULT_ISSUING_AUTHORITY,
+    DEFAULT_VERIFICATION_BASE_URL,
+    getIssuingAuthority,
+    getVerificationBaseUrl,
+)
 
 
-DEFAULT_VERIFICATION_BASE_URL = "http://127.0.0.1:8000"
-DEFAULT_ISSUING_AUTHORITY = "Universidad Técnica Nacional"
 ACTIVE_BADGE_STATUSES = frozenset({"issued", "active"})
 
 
@@ -124,14 +129,6 @@ def assertValidInstitutionalId(institutionalId: str) -> None:
         raise InvalidInstitutionalIdError(
             "Institutional ID must contain exactly 9 digits"
         )
-
-
-def getIssuingAuthority() -> str:
-    configuredAuthority = os.getenv(
-        "BADGE_TRACKING_ISSUING_AUTHORITY",
-        DEFAULT_ISSUING_AUTHORITY,
-    ).strip()
-    return configuredAuthority or DEFAULT_ISSUING_AUTHORITY
 
 
 def registerInstitutionalIdentity(
@@ -257,6 +254,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
             "issued_at": 1,
             "valid_from": 1,
             "valid_until": 1,
+            "issuing_authority": 1,
         },
     )
 
@@ -276,6 +274,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
+        "branding": resolveBadgeBranding(badge),
     }
 
 
@@ -312,6 +311,7 @@ def getExtendedBadgeProfile(institutionalId: str, pin: str) -> dict:
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
+        "branding": resolveBadgeBranding(badge),
         "issuedAt": issuedAt,
         "issuingAuthority": (
             badge.get("issuing_authority") or getIssuingAuthority()
@@ -374,14 +374,6 @@ def validateUserPin(institutionalId: str, pin: str) -> dict:
         "institutionalId": institutionalId,
         "message": "PIN validated successfully",
     }
-
-
-def getVerificationBaseUrl() -> str:
-    baseUrl = os.getenv(
-        "BADGE_TRACKING_VERIFICATION_BASE_URL",
-        DEFAULT_VERIFICATION_BASE_URL,
-    )
-    return baseUrl.rstrip("/")
 
 
 def _hashAgeProofToken(token: str) -> str:

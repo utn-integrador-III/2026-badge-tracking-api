@@ -98,6 +98,18 @@ class TestExtendedBadgeProfile:
             "birthplace": "San Jose, Costa Rica",
             "documentExpiry": "2031-05-20",
             "digitalSignatureUrl": None,
+            "branding": {
+                "institution": "Universidad Técnica Nacional",
+                "primaryColor": "#1F3B73",
+                "secondaryColor": "#C8A227",
+                "contrastTextColor": "#FFFFFF",
+                "logoUrl": None,
+                "logoContentType": None,
+                "logoSizeInBytes": None,
+                "logoUpdatedAt": None,
+                "isCustomized": False,
+                "updatedAt": None,
+            },
         }
         assert datetime.fromisoformat(body["issuedAt"]).tzinfo is not None
         assert response.headers["Cache-Control"] == "no-store"
