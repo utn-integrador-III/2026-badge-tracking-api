@@ -1,18 +1,24 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from models.user import (
     AgeProofVerificationResponse,
     BadgeVerificationResponse,
+    QrCountdownResponse,
     ScanBadgeVerificationRequest,
 )
 from services.badge_verification_service import (
     verifyScannedBadge as verifyScannedBadgeService,
+)
+from services.qr_countdown_service import (
+    QrTokenNotFoundError,
+    getQrCountdown as getQrCountdownService,
 )
 from services.user_service import (
     AgeProofTokenExpiredError,
     AgeProofTokenNotFoundError,
     verifyAgeProof as verifyAgeProofService,
 )
+from utils.http_errors import serviceErrorsAsHttp
 
 
 router = APIRouter(prefix="/verifications", tags=["Verifications"])
@@ -52,3 +58,38 @@ def verifyScannedBadgeToken(token: str) -> dict:
 )
 def verifyScannedBadge(request: ScanBadgeVerificationRequest) -> dict:
     return verifyScannedBadgeService(request.scannedValue)
+
+
+QR_COUNTDOWN_ERROR_STATUSES = {
+    QrTokenNotFoundError: status.HTTP_404_NOT_FOUND,
+}
+
+
+def _readCountdown(scannedValue: str, response: Response) -> dict:
+    with serviceErrorsAsHttp(QR_COUNTDOWN_ERROR_STATUSES):
+        countdown = getQrCountdownService(scannedValue)
+
+    # The answer is different every second, so nothing may cache it.
+    response.headers["Cache-Control"] = "no-store"
+    return countdown
+
+
+@router.get(
+    "/countdown/{token}",
+    response_model=QrCountdownResponse,
+    status_code=status.HTTP_200_OK,
+)
+def getQrCountdown(token: str, response: Response) -> dict:
+    return _readCountdown(token, response)
+
+
+@router.post(
+    "/countdown",
+    response_model=QrCountdownResponse,
+    status_code=status.HTTP_200_OK,
+)
+def getScannedQrCountdown(
+    request: ScanBadgeVerificationRequest,
+    response: Response,
+) -> dict:
+    return _readCountdown(request.scannedValue, response)
