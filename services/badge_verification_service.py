@@ -17,6 +17,7 @@ from services.user_service import (
     findLatestBadge,
     getVerificationBaseUrl,
 )
+from utils.countdown import remainingSeconds
 from utils.qr_code import buildQrCodeDataUri
 from utils.signing import (
     InvalidSignatureError,
@@ -101,6 +102,8 @@ def generateBadgeVerificationQr(
         "issuedAt": issuedAt,
         "expiresAt": expiresAt,
         "expiresInSeconds": request.expiresInSeconds,
+        "remainingSeconds": remainingSeconds(expiresAtDate, issuedAtDate),
+        "serverTime": issuedAt,
     }
 
 
@@ -170,6 +173,7 @@ def _buildVerificationResponse(
     badgeStatus: str | None = None,
     issuedAt: str | None = None,
     expiresAt: str | None = None,
+    remainingValidity: int | None = None,
 ) -> dict:
     result = (
         BadgeVerificationResult.passed.value
@@ -185,6 +189,7 @@ def _buildVerificationResponse(
         "badgeStatus": badgeStatus,
         "issuedAt": issuedAt,
         "expiresAt": expiresAt,
+        "remainingSeconds": remainingValidity,
         "verifiedAt": verifiedAt,
         "verificationId": verificationId,
     }
@@ -254,6 +259,7 @@ def verifyScannedBadge(scannedValue: str) -> dict:
         badgeStatus=badgeStatus,
         issuedAt=issuedAt,
         expiresAt=expiresAt,
+        remainingValidity=remainingSeconds(expiresAt, verifiedAtDate),
     )
     _recordVerification(
         verificationId,
