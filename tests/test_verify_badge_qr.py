@@ -79,7 +79,9 @@ class TestGenerateVerificationQr:
         assert response.status_code == 201
         body = response.json()
         assert body["disclosedAttributes"] == ["fullName", "photoUrl", "role"]
-        assert body["expiresInSeconds"] == 120
+        assert body["expiresInSeconds"] == 60
+        assert body["remainingSeconds"] == 60
+        assert body["serverTime"] == body["issuedAt"]
         assert body["qrCodeImage"].startswith("data:image/png;base64,")
         assert body["verificationUrl"].endswith(
             f"/verifications/badge/{body['token']}"

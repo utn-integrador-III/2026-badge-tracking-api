@@ -65,7 +65,9 @@ class TestGenerateAgeProofQr:
         body = response.json()
         assert body["minimumAge"] == 18
         assert body["meetsMinimumAge"] is True
-        assert body["expiresInSeconds"] == 120
+        assert body["expiresInSeconds"] == 60
+        assert body["remainingSeconds"] == 60
+        assert body["serverTime"] == body["issuedAt"]
         assert body["qrCodeImage"].startswith("data:image/png;base64,")
         assert body["token"] in body["verificationUrl"]
         assert body["verificationUrl"].endswith(
@@ -197,6 +199,7 @@ class TestVerifyAgeProof:
             "badgeStatus",
             "issuedAt",
             "expiresAt",
+            "remainingSeconds",
             "verifiedAt",
         }
 
