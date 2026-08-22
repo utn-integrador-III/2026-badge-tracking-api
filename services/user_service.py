@@ -1,5 +1,4 @@
 import hashlib
-import os
 import re
 import secrets
 import uuid
@@ -18,12 +17,20 @@ from models.user import (
     SetPinRequest,
 )
 from services.badge_delivery_service import triggerBadgeDelivery
+from services.institution_branding_service import resolveBadgeBranding
+from utils.countdown import remainingSeconds
 from utils.qr_code import buildQrCodeDataUri
+# Re-exported so callers keep importing the deployment settings from here.
+from utils.settings import (
+    DEFAULT_ISSUING_AUTHORITY,
+    DEFAULT_VERIFICATION_BASE_URL,
+    getIssuingAuthority,
+    getVerificationBaseUrl,
+)
 
 
-DEFAULT_VERIFICATION_BASE_URL = "http://127.0.0.1:8000"
-DEFAULT_ISSUING_AUTHORITY = "Universidad Técnica Nacional"
 ACTIVE_BADGE_STATUSES = frozenset({"issued", "active"})
+AGE_PROOF_VERIFICATION_PATH = "/verifications/age-proof/"
 
 
 _LATEST_BADGE_FIRST = [("issued_at", DESCENDING), ("id", DESCENDING)]
@@ -124,14 +131,6 @@ def assertValidInstitutionalId(institutionalId: str) -> None:
         raise InvalidInstitutionalIdError(
             "Institutional ID must contain exactly 9 digits"
         )
-
-
-def getIssuingAuthority() -> str:
-    configuredAuthority = os.getenv(
-        "BADGE_TRACKING_ISSUING_AUTHORITY",
-        DEFAULT_ISSUING_AUTHORITY,
-    ).strip()
-    return configuredAuthority or DEFAULT_ISSUING_AUTHORITY
 
 
 def registerInstitutionalIdentity(
@@ -257,6 +256,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
             "issued_at": 1,
             "valid_from": 1,
             "valid_until": 1,
+            "issuing_authority": 1,
         },
     )
 
@@ -276,6 +276,7 @@ def getDigitalBadgeProfile(institutionalId: str) -> dict:
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
+        "branding": resolveBadgeBranding(badge),
     }
 
 
@@ -312,6 +313,7 @@ def getExtendedBadgeProfile(institutionalId: str, pin: str) -> dict:
         "status": badge["status"],
         "validFrom": validFrom,
         "validUntil": validUntil,
+        "branding": resolveBadgeBranding(badge),
         "issuedAt": issuedAt,
         "issuingAuthority": (
             badge.get("issuing_authority") or getIssuingAuthority()
@@ -376,15 +378,7 @@ def validateUserPin(institutionalId: str, pin: str) -> dict:
     }
 
 
-def getVerificationBaseUrl() -> str:
-    baseUrl = os.getenv(
-        "BADGE_TRACKING_VERIFICATION_BASE_URL",
-        DEFAULT_VERIFICATION_BASE_URL,
-    )
-    return baseUrl.rstrip("/")
-
-
-def _hashAgeProofToken(token: str) -> str:
+def hashAgeProofToken(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -478,7 +472,7 @@ def generateAgeProofQr(
     token = secrets.token_urlsafe(32)
     database.age_proof_tokens.insert_one(
         {
-            "token_hash": _hashAgeProofToken(token),
+            "token_hash": hashAgeProofToken(token),
             "user_id": user["id"],
             "badge_id": badge["id"],
             "minimum_age": request.minimumAge,
@@ -490,7 +484,9 @@ def generateAgeProofQr(
         }
     )
 
-    verificationUrl = f"{getVerificationBaseUrl()}/verifications/age-proof/{token}"
+    verificationUrl = (
+        f"{getVerificationBaseUrl()}{AGE_PROOF_VERIFICATION_PATH}{token}"
+    )
 
     return {
         "token": token,
@@ -501,13 +497,15 @@ def generateAgeProofQr(
         "issuedAt": issuedAt,
         "expiresAt": expiresAt,
         "expiresInSeconds": request.expiresInSeconds,
+        "remainingSeconds": remainingSeconds(expiresAtDate, issuedAtDate),
+        "serverTime": issuedAt,
     }
 
 
 def verifyAgeProof(token: str) -> dict:
     database = getDatabase()
     ageProof: dict[str, Any] | None = database.age_proof_tokens.find_one(
-        {"token_hash": _hashAgeProofToken(token)},
+        {"token_hash": hashAgeProofToken(token)},
         {
             "user_id": 1,
             "badge_id": 1,
@@ -554,5 +552,9 @@ def verifyAgeProof(token: str) -> dict:
         "badgeStatus": badgeStatus,
         "issuedAt": ageProof["issued_at"],
         "expiresAt": ageProof["expires_at"],
+        "remainingSeconds": remainingSeconds(
+            ageProof["expires_at"],
+            verifiedAtDate,
+        ),
         "verifiedAt": verifiedAtDate.isoformat(),
     }

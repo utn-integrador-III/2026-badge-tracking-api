@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from database.connection import initializeDatabase
 from routes.badges import router as badgesRouter
+from routes.institutions import router as institutionsRouter
 from routes.users import router as usersRouter
 from routes.verifications import router as verificationsRouter
 
@@ -14,6 +15,7 @@ def createApp() -> FastAPI:
     )
     app.include_router(usersRouter)
     app.include_router(badgesRouter)
+    app.include_router(institutionsRouter)
     app.include_router(verificationsRouter)
     return app
 

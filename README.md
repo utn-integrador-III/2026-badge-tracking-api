@@ -23,6 +23,7 @@ BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 BADGE_TRACKING_VERIFICATION_BASE_URL=http://127.0.0.1:8000
 BADGE_TRACKING_SIGNING_KEY=change-me-in-every-deployed-environment
 BADGE_TRACKING_ISSUING_AUTHORITY=Universidad Técnica Nacional
+BADGE_TRACKING_QR_LIFETIME_SECONDS=60
 ```
 
 `BADGE_TRACKING_VERIFICATION_BASE_URL` is the public base URL encoded into the
@@ -33,6 +34,10 @@ falls back to a well-known development value, so **it must be set to a private
 random value in every deployed environment**. Anyone holding this key can mint
 badges that pass verification. Rotating it invalidates QR codes already issued,
 which is harmless because they expire within minutes anyway.
+
+`BADGE_TRACKING_QR_LIFETIME_SECONDS` is how long a shared QR code stays valid
+when the client does not ask for a specific lifetime. It defaults to `60` and
+must be between `30` and `900`; anything else falls back to `60`.
 
 `BADGE_TRACKING_ISSUING_AUTHORITY` is stored with every badge when it is issued.
 It defaults to `Universidad Técnica Nacional`. Changing the setting affects new
@@ -192,9 +197,20 @@ Response:
   "badgeCode": "BADGE-123456789-ABC12345",
   "status": "issued",
   "validFrom": "2026-06-20T16:20:27.493776+00:00",
-  "validUntil": "2027-06-20T16:20:27.493776+00:00"
+  "validUntil": "2027-06-20T16:20:27.493776+00:00",
+  "branding": {
+    "institution": "Universidad Técnica Nacional",
+    "primaryColor": "#1F3B73",
+    "secondaryColor": "#C8A227",
+    "contrastTextColor": "#FFFFFF",
+    "logoUrl": null,
+    "isCustomized": false
+  }
 }
 ```
+
+The `branding` block carries the institution's logo and accent colours, so the
+badge renders in the institutional brand. See [Custom Badge Branding](#custom-badge-branding).
 
 ## US-05 Share Age Proof via Time-Limited QR
 
@@ -220,12 +236,13 @@ Example body:
 {
   "pin": "281992",
   "minimumAge": 18,
-  "expiresInSeconds": 120
+  "expiresInSeconds": 60
 }
 ```
 
-`minimumAge` defaults to `18`. `expiresInSeconds` defaults to `120` and must be
-between `30` and `900`.
+`minimumAge` defaults to `18`. `expiresInSeconds` defaults to the deployment's
+configured QR lifetime (60 seconds out of the box) and must be between `30` and
+`900`. See [Time-Limited QR Tokens](#us-19-time-limited-qr-tokens).
 
 Response:
 
@@ -237,8 +254,10 @@ Response:
   "minimumAge": 18,
   "meetsMinimumAge": true,
   "issuedAt": "2026-08-01T11:57:02.291991+00:00",
-  "expiresAt": "2026-08-01T11:59:02.291991+00:00",
-  "expiresInSeconds": 120
+  "expiresAt": "2026-08-01T11:58:02.291991+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T11:57:02.291991+00:00"
 }
 ```
 
@@ -304,7 +323,7 @@ Example body:
 {
   "pin": "281992",
   "disclose": ["fullName", "photoUrl", "role"],
-  "expiresInSeconds": 120
+  "expiresInSeconds": 60
 }
 ```
 
@@ -315,8 +334,9 @@ fullName, photoUrl, role, institutionalId, badgeCode
 ```
 
 `disclose` defaults to `["fullName", "photoUrl", "role"]`, cannot be empty and
-cannot repeat a value. `expiresInSeconds` defaults to `120` and must be between
-`30` and `900`. Disclosing fewer attributes produces a smaller, easier to scan
+cannot repeat a value. `expiresInSeconds` defaults to the deployment's
+configured QR lifetime (60 seconds out of the box) and must be between `30` and
+`900`. Disclosing fewer attributes produces a smaller, easier to scan
 QR code.
 
 Response:
@@ -328,8 +348,10 @@ Response:
   "qrCodeImage": "data:image/png;base64,iVBORw0KGgo...",
   "disclosedAttributes": ["fullName", "photoUrl", "role"],
   "issuedAt": "2026-08-01T12:31:35.129776+00:00",
-  "expiresAt": "2026-08-01T12:33:35.129776+00:00",
-  "expiresInSeconds": 120
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T12:31:35.129776+00:00"
 }
 ```
 
@@ -850,6 +872,367 @@ embedded username or password values are rejected
 the maximum length is 2,048 characters after trimming
 blank or omitted values are stored as null
 ```
+
+## US-14 Expiry and Renewal Notifications
+
+Thirty days before a badge expires, its holder gets a notification carrying a
+renewal call to action. The notice is queued once per badge and waits in the
+holder's device queue until it is collected, acted on, or the badge changes.
+
+### Queue the notices (scheduled job)
+
+```bash
+python -m jobs.expiry_notifications
+```
+
+The job walks every active badge that entered the expiry window and queues the
+notice for its holder, so a holder is warned even when their device has not
+opened the app for weeks. Running it twice never warns anybody twice. Schedule
+it once a day.
+
+Fetching notifications also evaluates the caller's own badge, so a device that
+syncs between two job runs still sees the notice on time.
+
+### Collect the notifications (badge holder, PIN required)
+
+```http
+POST /users/{institutionalId}/badge-notifications/fetch
+```
+
+```json
+{ "pin": "281992" }
+```
+
+Response:
+
+```json
+{
+  "institutionalId": "123456789",
+  "notifications": [
+    {
+      "notificationId": "8f0b1d4c9a1c4f0e9a4c2b7d5e6f1a30",
+      "type": "badge_expiring",
+      "status": "pending",
+      "badgeId": 3,
+      "badgeCode": "BADGE-123456789-47B30953",
+      "title": "Your badge expires in 30 days",
+      "body": "Badge BADGE-123456789-47B30953 expires in 30 days on 2027-01-28. Request a renewal to keep using your digital badge.",
+      "actionLabel": "Renew badge",
+      "actionUrl": "http://127.0.0.1:8000/users/123456789/badge-renewals",
+      "daysUntilExpiry": 30,
+      "expired": false,
+      "validUntil": "2027-01-28T13:03:27.300024+00:00",
+      "createdAt": "2026-12-29T13:03:27.300024+00:00",
+      "deliveredAt": null
+    }
+  ]
+}
+```
+
+`daysUntilExpiry`, `title` and `body` are built when the device syncs, never
+when the notice was queued, so a notification that waited in the queue still
+shows an accurate countdown. Once the expiry date passes, the same notification
+reports `"expired": true` and asks for a renewal instead of counting down.
+
+Confirm the push reached the device:
+
+```http
+POST /users/{institutionalId}/badge-notifications/{notificationId}/acknowledge
+```
+
+Clear it from the holder's device:
+
+```http
+POST /users/{institutionalId}/badge-notifications/{notificationId}/dismiss
+```
+
+Both take `{ "pin": "281992" }`. Acknowledging moves the notice to `delivered`
+with a `deliveredAt` timestamp and stops it appearing in fetches; repeating
+either call is safe and keeps the original timestamps.
+
+Notification statuses:
+
+```text
+pending     queued, waiting for the device to collect it
+delivered   the device confirmed it showed the notification
+dismissed   the holder cleared it or acted on the renewal CTA
+resolved    the badge was renewed, suspended or revoked
+```
+
+### Renew the badge (the call to action)
+
+`actionUrl` points at the renewal endpoint the CTA calls:
+
+```http
+POST /users/{institutionalId}/badge-renewals
+```
+
+```json
+{ "pin": "281992" }
+```
+
+Response:
+
+```json
+{
+  "requestId": "b74e2c1f88f6446da5d5ec3ff6a01c2b",
+  "badgeId": 3,
+  "badgeCode": "BADGE-123456789-47B30953",
+  "status": "requested",
+  "validUntil": "2027-01-28T13:03:27.300024+00:00",
+  "daysUntilExpiry": 30,
+  "requestedAt": "2026-12-29T13:05:11.482233+00:00",
+  "fulfilledAt": null,
+  "fulfilledBadgeId": null
+}
+```
+
+Requesting a renewal dismisses the notification that asked for it, so the
+holder stops being nagged while the request is open. Tapping the CTA twice
+returns the same open request rather than creating a second one. A holder
+whose badge is already suspended or revoked has nothing to renew and gets
+`409`.
+
+The request is fulfilled by the existing issuance endpoint: when an admin
+issues a new badge for that holder (`POST /badges`, US-10), the open request
+moves to `fulfilled` with the new badge in `fulfilledBadgeId`, and the notice
+for the replaced badge is resolved. Suspending or revoking a badge cancels its
+open renewal request and resolves its notice, alongside the delivery
+cancellation described in US-11.
+
+Renewal request statuses:
+
+```text
+requested   the holder asked for a renewal
+fulfilled   an admin issued the replacement badge
+cancelled   the badge was suspended or revoked before renewal
+```
+
+### Configuration
+
+```text
+BADGE_TRACKING_EXPIRY_NOTICE_DAYS       days of warning before expiry, default 30
+BADGE_TRACKING_VERIFICATION_BASE_URL    base URL the renewal actionUrl points at
+```
+
+Values outside 1-365, or values that are not whole numbers, fall back to 30
+days. Badges predating the validity fields fall back to the same 365-day
+default used elsewhere, so legacy holders are warned too.
+
+## Custom Badge Branding
+
+An institution admin uploads a logo and picks the accent colours their badges
+are rendered with. Branding is stored per institution and every badge view
+carries the brand of the institution that issued that badge.
+
+### Set the brand (admin, multipart upload)
+
+```http
+PUT /institutions/branding
+```
+
+Sent as `multipart/form-data`:
+
+```text
+adminInstitutionalId   900000001
+adminPin               481726
+primaryColor           #0b5fff
+secondaryColor         #ffd166
+logo                   the image file (optional)
+```
+
+```bash
+curl -X PUT http://127.0.0.1:8000/institutions/branding   -F adminInstitutionalId=900000001   -F adminPin=481726   -F primaryColor=#0b5fff   -F secondaryColor=#ffd166   -F logo=@logo.png
+```
+
+Response:
+
+```json
+{
+  "institution": "Universidad Técnica Nacional",
+  "primaryColor": "#0B5FFF",
+  "secondaryColor": "#FFD166",
+  "contrastTextColor": "#FFFFFF",
+  "logoUrl": "http://127.0.0.1:8000/institutions/branding/logos/4f8b1c2d9e7a4b6c8d0e2f4a6b8c0d1e",
+  "logoContentType": "image/png",
+  "logoSizeInBytes": 20418,
+  "logoUpdatedAt": "2026-08-21T13:03:27.300024+00:00",
+  "isCustomized": true,
+  "updatedAt": "2026-08-21T13:03:27.300024+00:00"
+}
+```
+
+The admin brands the institution that issued their own badge, so an admin can
+never restyle somebody else's institution. The same authorization rule as US-11
+applies: a suspended or revoked admin badge loses management access.
+
+Colours accept `#RRGGBB` or the `#RGB` shorthand, in any case and with
+surrounding spaces, and are stored normalized as uppercase `#RRGGBB`.
+`contrastTextColor` is derived from the primary colour, not stored: it returns
+the black or white that stays legible on that accent, so clients do not have to
+guess.
+
+Omitting the `logo` part adjusts the colours and keeps the logo already on
+file. Uploading a new logo retires the previous one, and the old logo URL stops
+resolving.
+
+### Read the brand
+
+```http
+GET /institutions/branding
+```
+
+Returns the brand of the institution this deployment issues under. Until an
+admin sets one, every field comes back on the default palette with
+`"isCustomized": false`, so a badge always has something to render.
+
+### Serve the logo
+
+```http
+GET /institutions/branding/logos/{logoAssetId}
+```
+
+Returns the image bytes with their detected content type. Every upload gets a
+new asset id, so the response is served `immutable` and a replaced logo is
+never shown from a cache. The logo is served with `nosniff`, a
+`default-src 'none'; sandbox` content security policy, and an inline
+disposition.
+
+### Branded badges
+
+`GET /users/{institutionalId}/badge-profile` and the credential details of
+US-15 both carry a `branding` block:
+
+```json
+{
+  "badgeCode": "BADGE-123456789-47B30953",
+  "status": "issued",
+  "branding": {
+    "institution": "Universidad Técnica Nacional",
+    "primaryColor": "#0B5FFF",
+    "secondaryColor": "#FFD166",
+    "contrastTextColor": "#FFFFFF",
+    "logoUrl": "http://127.0.0.1:8000/institutions/branding/logos/4f8b1c2d9e7a4b6c8d0e2f4a6b8c0d1e",
+    "isCustomized": true
+  }
+}
+```
+
+A badge keeps the authority it was issued under, so branding follows the badge:
+a holder whose badge was granted by another institution keeps that
+institution's brand, and a reissued badge keeps the brand of the institution
+that granted it.
+
+### Logo rules
+
+```text
+accepted formats   PNG, JPEG, WEBP
+maximum size       524,288 bytes (512 KB)
+format detection   read from the file's own bytes, not the declared type
+```
+
+SVG is deliberately rejected. An SVG can carry script and the logo is served
+back from the API origin, so accepting one would hand every badge viewer a
+stored cross-site scripting vector.
+
+A rejected upload leaves the existing brand untouched: `413` when the file is
+too large, `415` when the format is not supported, and `422` when the file is
+empty or a colour is not a hex value.
+
+## US-19 Time-Limited QR Tokens
+
+Every shared QR code lives inside a short window, and both the holder showing
+it and the verifier scanning it can watch that window run down.
+
+### The lifetime
+
+```text
+default            60 seconds
+allowed range      30 to 900 seconds
+deployment default BADGE_TRACKING_QR_LIFETIME_SECONDS
+per request        "expiresInSeconds" on either QR endpoint
+```
+
+A client that sends `expiresInSeconds` gets exactly that, still bounded by the
+allowed range. A client that omits it gets the deployment default. A
+misconfigured environment variable falls back to 60 seconds rather than minting
+a code that is unusable or long lived.
+
+Both QR endpoints report the countdown when they hand the code over:
+
+```json
+{
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T12:31:35.129776+00:00"
+}
+```
+
+`serverTime` is the server's clock at that moment, so a device whose own clock
+drifted can still render an accurate countdown from `expiresAt`.
+
+### Reading the live countdown
+
+```http
+GET /verifications/countdown/{token}
+POST /verifications/countdown
+```
+
+The `POST` form takes the raw scanned string, the same shape the badge scan
+endpoint accepts:
+
+```json
+{ "scannedValue": "http://127.0.0.1:8000/verifications/badge/eyJhdHQiOns..." }
+```
+
+Response:
+
+```json
+{
+  "tokenType": "badge_verification",
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "serverTime": "2026-08-01T12:32:12.004881+00:00",
+  "totalSeconds": 60,
+  "remainingSeconds": 23,
+  "expired": false
+}
+```
+
+`tokenType` is `badge_verification` (US-07) or `age_proof` (US-05); the
+endpoint accepts either kind, as a bare token or as the URL the QR encodes.
+Once the window closes the same call keeps answering with
+`"remainingSeconds": 0` and `"expired": true`.
+
+The countdown is safe to poll once a second:
+
+```text
+it never verifies anything and never records a verification
+it discloses no attributes, no name and no institutional ID
+it answers no-store, because the number changes every second
+an unreadable, forged or unknown token answers 404 alike
+```
+
+That last rule matters: a countdown reply never reveals whether a token was
+ever real, so it cannot be used to probe for valid tokens.
+
+### What the countdown does not tell you
+
+The countdown answers how much of the sharing window is left, not whether the
+credential behind it still holds up. A badge can be suspended or revoked while
+its QR code is still inside its window. Scanning remains the authoritative
+check, and it is the call that records the audit trail:
+
+```http
+POST /verifications/badge
+GET /verifications/age-proof/{token}
+```
+
+Both now report `remainingSeconds` alongside their verdict, so a verifier sees
+the time left on the same screen as the result. On a badge scan it is `null`
+when the token could not be read at all, and `0` once the window has closed.
 
 ## Tests
 

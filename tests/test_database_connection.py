@@ -16,3 +16,24 @@ def test_initialize_database_creates_required_indexes(mongoDatabase):
     assert badgeIndexes["badge_user_status"].get("unique") is None
     assert "unique_badge_user_id" not in badgeIndexes
     assert "badge_delivery_badge_status" in deliveryIndexes
+
+    brandingIndexes = mongoDatabase.institution_branding.index_information()
+
+    # One brand per institution, looked up by asset id when a logo is served.
+    assert "unique_institution_branding" in brandingIndexes
+    assert brandingIndexes["unique_institution_branding"]["unique"] is True
+    assert "institution_branding_logo_asset" in brandingIndexes
+
+    notificationIndexes = mongoDatabase.badge_notifications.index_information()
+    renewalIndexes = mongoDatabase.badge_renewal_requests.index_information()
+
+    # A badge is warned about once, and only one renewal request of a badge
+    # can be open at a time.
+    assert "unique_badge_notification_per_badge" in notificationIndexes
+    assert notificationIndexes["unique_badge_notification_per_badge"]["unique"] is True
+    assert "badge_notification_user_status" in notificationIndexes
+    assert "unique_badge_renewal_request_per_badge_status" in renewalIndexes
+    assert (
+        renewalIndexes["unique_badge_renewal_request_per_badge_status"]["unique"]
+        is True
+    )
