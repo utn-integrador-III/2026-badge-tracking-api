@@ -5,6 +5,11 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from utils.branding import normalizeHexColor
+from utils.settings import (
+    MAX_QR_LIFETIME_IN_SECONDS,
+    MIN_QR_LIFETIME_IN_SECONDS,
+    getQrLifetimeInSeconds,
+)
 
 
 MAX_REALISTIC_AGE_IN_YEARS = 120
@@ -293,10 +298,13 @@ class GenerateAgeProofQrRequest(BaseModel):
         description="Age threshold the verifying party needs to confirm",
     )
     expiresInSeconds: int = Field(
-        default=120,
-        ge=30,
-        le=900,
-        description="Lifetime of the QR code, between 30 and 900 seconds",
+        default_factory=getQrLifetimeInSeconds,
+        ge=MIN_QR_LIFETIME_IN_SECONDS,
+        le=MAX_QR_LIFETIME_IN_SECONDS,
+        description=(
+            "Lifetime of the QR code in seconds, between 30 and 900. "
+            "Defaults to the lifetime configured for the deployment."
+        ),
     )
 
     @field_validator("pin")
@@ -316,6 +324,8 @@ class AgeProofQrResponse(BaseModel):
     issuedAt: str
     expiresAt: str
     expiresInSeconds: int
+    remainingSeconds: int
+    serverTime: str
 
 
 class AgeProofVerificationResponse(BaseModel):
@@ -326,7 +336,23 @@ class AgeProofVerificationResponse(BaseModel):
     badgeStatus: str
     issuedAt: str
     expiresAt: str
+    remainingSeconds: int
     verifiedAt: str
+
+
+class QrTokenType(str, Enum):
+    ageProof = "age_proof"
+    badgeVerification = "badge_verification"
+
+
+class QrCountdownResponse(BaseModel):
+    tokenType: QrTokenType
+    issuedAt: str
+    expiresAt: str
+    serverTime: str
+    totalSeconds: int
+    remainingSeconds: int
+    expired: bool
 
 
 class DisclosableAttribute(str, Enum):
@@ -364,10 +390,13 @@ class GenerateBadgeVerificationQrRequest(BaseModel):
         description="Attributes the verifier is allowed to see",
     )
     expiresInSeconds: int = Field(
-        default=120,
-        ge=30,
-        le=900,
-        description="Lifetime of the QR code, between 30 and 900 seconds",
+        default_factory=getQrLifetimeInSeconds,
+        ge=MIN_QR_LIFETIME_IN_SECONDS,
+        le=MAX_QR_LIFETIME_IN_SECONDS,
+        description=(
+            "Lifetime of the QR code in seconds, between 30 and 900. "
+            "Defaults to the lifetime configured for the deployment."
+        ),
     )
 
     @field_validator("pin")
@@ -396,6 +425,8 @@ class BadgeVerificationQrResponse(BaseModel):
     issuedAt: str
     expiresAt: str
     expiresInSeconds: int
+    remainingSeconds: int
+    serverTime: str
 
 
 class ScanBadgeVerificationRequest(BaseModel):
@@ -416,6 +447,7 @@ class BadgeVerificationResponse(BaseModel):
     badgeStatus: str | None
     issuedAt: str | None
     expiresAt: str | None
+    remainingSeconds: int | None
     verifiedAt: str
     verificationId: str
 

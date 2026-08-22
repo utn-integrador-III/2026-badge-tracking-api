@@ -23,6 +23,7 @@ BADGE_TRACKING_MONGODB_DATABASE=badge_tracking
 BADGE_TRACKING_VERIFICATION_BASE_URL=http://127.0.0.1:8000
 BADGE_TRACKING_SIGNING_KEY=change-me-in-every-deployed-environment
 BADGE_TRACKING_ISSUING_AUTHORITY=Universidad Técnica Nacional
+BADGE_TRACKING_QR_LIFETIME_SECONDS=60
 ```
 
 `BADGE_TRACKING_VERIFICATION_BASE_URL` is the public base URL encoded into the
@@ -33,6 +34,10 @@ falls back to a well-known development value, so **it must be set to a private
 random value in every deployed environment**. Anyone holding this key can mint
 badges that pass verification. Rotating it invalidates QR codes already issued,
 which is harmless because they expire within minutes anyway.
+
+`BADGE_TRACKING_QR_LIFETIME_SECONDS` is how long a shared QR code stays valid
+when the client does not ask for a specific lifetime. It defaults to `60` and
+must be between `30` and `900`; anything else falls back to `60`.
 
 `BADGE_TRACKING_ISSUING_AUTHORITY` is stored with every badge when it is issued.
 It defaults to `Universidad Técnica Nacional`. Changing the setting affects new
@@ -231,12 +236,13 @@ Example body:
 {
   "pin": "281992",
   "minimumAge": 18,
-  "expiresInSeconds": 120
+  "expiresInSeconds": 60
 }
 ```
 
-`minimumAge` defaults to `18`. `expiresInSeconds` defaults to `120` and must be
-between `30` and `900`.
+`minimumAge` defaults to `18`. `expiresInSeconds` defaults to the deployment's
+configured QR lifetime (60 seconds out of the box) and must be between `30` and
+`900`. See [Time-Limited QR Tokens](#us-19-time-limited-qr-tokens).
 
 Response:
 
@@ -248,8 +254,10 @@ Response:
   "minimumAge": 18,
   "meetsMinimumAge": true,
   "issuedAt": "2026-08-01T11:57:02.291991+00:00",
-  "expiresAt": "2026-08-01T11:59:02.291991+00:00",
-  "expiresInSeconds": 120
+  "expiresAt": "2026-08-01T11:58:02.291991+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T11:57:02.291991+00:00"
 }
 ```
 
@@ -315,7 +323,7 @@ Example body:
 {
   "pin": "281992",
   "disclose": ["fullName", "photoUrl", "role"],
-  "expiresInSeconds": 120
+  "expiresInSeconds": 60
 }
 ```
 
@@ -326,8 +334,9 @@ fullName, photoUrl, role, institutionalId, badgeCode
 ```
 
 `disclose` defaults to `["fullName", "photoUrl", "role"]`, cannot be empty and
-cannot repeat a value. `expiresInSeconds` defaults to `120` and must be between
-`30` and `900`. Disclosing fewer attributes produces a smaller, easier to scan
+cannot repeat a value. `expiresInSeconds` defaults to the deployment's
+configured QR lifetime (60 seconds out of the box) and must be between `30` and
+`900`. Disclosing fewer attributes produces a smaller, easier to scan
 QR code.
 
 Response:
@@ -339,8 +348,10 @@ Response:
   "qrCodeImage": "data:image/png;base64,iVBORw0KGgo...",
   "disclosedAttributes": ["fullName", "photoUrl", "role"],
   "issuedAt": "2026-08-01T12:31:35.129776+00:00",
-  "expiresAt": "2026-08-01T12:33:35.129776+00:00",
-  "expiresInSeconds": 120
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T12:31:35.129776+00:00"
 }
 ```
 
@@ -1127,6 +1138,101 @@ stored cross-site scripting vector.
 A rejected upload leaves the existing brand untouched: `413` when the file is
 too large, `415` when the format is not supported, and `422` when the file is
 empty or a colour is not a hex value.
+
+## US-19 Time-Limited QR Tokens
+
+Every shared QR code lives inside a short window, and both the holder showing
+it and the verifier scanning it can watch that window run down.
+
+### The lifetime
+
+```text
+default            60 seconds
+allowed range      30 to 900 seconds
+deployment default BADGE_TRACKING_QR_LIFETIME_SECONDS
+per request        "expiresInSeconds" on either QR endpoint
+```
+
+A client that sends `expiresInSeconds` gets exactly that, still bounded by the
+allowed range. A client that omits it gets the deployment default. A
+misconfigured environment variable falls back to 60 seconds rather than minting
+a code that is unusable or long lived.
+
+Both QR endpoints report the countdown when they hand the code over:
+
+```json
+{
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "expiresInSeconds": 60,
+  "remainingSeconds": 60,
+  "serverTime": "2026-08-01T12:31:35.129776+00:00"
+}
+```
+
+`serverTime` is the server's clock at that moment, so a device whose own clock
+drifted can still render an accurate countdown from `expiresAt`.
+
+### Reading the live countdown
+
+```http
+GET /verifications/countdown/{token}
+POST /verifications/countdown
+```
+
+The `POST` form takes the raw scanned string, the same shape the badge scan
+endpoint accepts:
+
+```json
+{ "scannedValue": "http://127.0.0.1:8000/verifications/badge/eyJhdHQiOns..." }
+```
+
+Response:
+
+```json
+{
+  "tokenType": "badge_verification",
+  "issuedAt": "2026-08-01T12:31:35.129776+00:00",
+  "expiresAt": "2026-08-01T12:32:35.129776+00:00",
+  "serverTime": "2026-08-01T12:32:12.004881+00:00",
+  "totalSeconds": 60,
+  "remainingSeconds": 23,
+  "expired": false
+}
+```
+
+`tokenType` is `badge_verification` (US-07) or `age_proof` (US-05); the
+endpoint accepts either kind, as a bare token or as the URL the QR encodes.
+Once the window closes the same call keeps answering with
+`"remainingSeconds": 0` and `"expired": true`.
+
+The countdown is safe to poll once a second:
+
+```text
+it never verifies anything and never records a verification
+it discloses no attributes, no name and no institutional ID
+it answers no-store, because the number changes every second
+an unreadable, forged or unknown token answers 404 alike
+```
+
+That last rule matters: a countdown reply never reveals whether a token was
+ever real, so it cannot be used to probe for valid tokens.
+
+### What the countdown does not tell you
+
+The countdown answers how much of the sharing window is left, not whether the
+credential behind it still holds up. A badge can be suspended or revoked while
+its QR code is still inside its window. Scanning remains the authoritative
+check, and it is the call that records the audit trail:
+
+```http
+POST /verifications/badge
+GET /verifications/age-proof/{token}
+```
+
+Both now report `remainingSeconds` alongside their verdict, so a verifier sees
+the time left on the same screen as the result. On a badge scan it is `null`
+when the token could not be read at all, and `0` once the window has closed.
 
 ## Tests
 
